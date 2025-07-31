@@ -1,0 +1,6 @@
+defaults:
+  - base_fsc
+  - override layer: s4_fsc
+
+transposed: false # Actually faster than "true"
+tie_dropout: true

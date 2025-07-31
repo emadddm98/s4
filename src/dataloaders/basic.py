@@ -270,3 +270,39 @@ class SpeechCommands(ResolutionSequenceDataset):
             path=self.data_dir,
             all_classes=self.all_classes,
         )
+
+#The Class for Fluent Speech Commands dataset
+
+class FSC(ResolutionSequenceDataset):
+    _name_ = "fsc"
+
+    @property
+    def init_defaults(self):
+        return {
+            "length": 16000,
+        }
+
+    @property
+    def d_input(self):
+        return 1
+
+    @property
+    def d_output(self):
+        # 31 intents in FSC
+        return 31
+
+    @property
+    def l_output(self):
+        return 0
+
+    @property
+    def L(self):
+        return self.length
+
+    def setup(self):
+        self.data_dir = self.data_dir or default_data_path / "fluent_speech_commands_dataset"
+        from src.dataloaders.datasets.fsc import get_fsc_datasets
+        train, val, test = get_fsc_datasets(self.data_dir, max_length=self.L)
+        self.dataset_train = train
+        self.dataset_val = val
+        self.dataset_test = test

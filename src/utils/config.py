@@ -73,6 +73,13 @@ def instantiate(registry, config, *args, partial=False, wrap=None, **kwargs):
         _name_ = None
         _target_ = registry[config]
         config = {}
+    # New Case (Emad) to add EarlyStoppingCallback
+    elif "_target_" in config:
+        config = dict(config)
+        _target_ = config.pop("_target_")
+        _name_ = config.pop("_name_", None)
+        fn = hydra.utils.get_method(path=_target_)
+    
     # Case 2b: grab the desired callable from name
     else:
         _name_ = config.pop("_name_")

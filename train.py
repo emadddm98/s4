@@ -165,8 +165,12 @@ class SequenceLightningModule(pl.LightningModule):
             self.hparams.model.pop("decoder", None)
         ) + utils.to_list(self.hparams.decoder)
 
+        # print("Decoder config:", decoder_cfg)
+
         # Instantiate model
         self.model = utils.instantiate(registry.model, self.hparams.model)
+        # print("Model instantiated:", self.model)
+
         if (name := self.hparams.train.post_init_hook['_name_']) is not None:
             kwargs = self.hparams.train.post_init_hook.copy()
             del kwargs['_name_']
@@ -178,7 +182,9 @@ class SequenceLightningModule(pl.LightningModule):
         self.task = utils.instantiate(
             tasks.registry, self.hparams.task, dataset=self.dataset, model=self.model
         )
-
+        
+        print("Task instantiated:", self.task.decoder)
+        
         # Create encoders and decoders
         encoder = encoders.instantiate(
             encoder_cfg, dataset=self.dataset, model=self.model
@@ -186,10 +192,24 @@ class SequenceLightningModule(pl.LightningModule):
         decoder = decoders.instantiate(
             decoder_cfg, model=self.model, dataset=self.dataset
         )
+        
+        ##SUPER UGLY BUT I WANT TO MAKE IT WORK FOR NOW
+        decoder[0].output_transform = nn.Linear(in_features=64, out_features=6)
+
+        print("DECODER IS", decoder)
+        print("DECODER CONFIG", decoder_cfg)
 
         # Extract the modules so they show up in the top level parameter count
         self.encoder = U.PassthroughSequential(self.task.encoder, encoder)
         self.decoder = U.PassthroughSequential(decoder, self.task.decoder)
+        
+        # Print the instantiated encoders and decoders
+        # print("Encoder instantiated:", self.encoder)
+        print("Decoder instantiated:", self.decoder)
+        
+        # breakpoint()
+        # exit()
+
         self.loss = self.task.loss
         self.loss_val = self.task.loss
         if hasattr(self.task, 'loss_val'):

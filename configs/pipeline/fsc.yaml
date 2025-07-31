@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - /trainer: default
+  - /loader: resolution
+  - /dataset: fsc
+  - /task: multiclass_classification
+  - /optimizer: adamw
+  - /scheduler: plateau
+
+train:
+  monitor: val/accuracy # Needed for plateau scheduler
+  mode: max
+
+encoder: linear
+
+decoder:
+  _name_: sequence
+  mode: pool
+  # num_classes: 6
+  # out_features: 6
+  # d_output: 6 # Number of output classes, should match dataset's number of classes
+
+loader:
+  train_resolution: 1
+  eval_resolutions:
+    - 1
+    - 2

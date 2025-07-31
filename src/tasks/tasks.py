@@ -125,6 +125,7 @@ class BaseTask:
             name: U.discard_kwargs(M.loss_metric_fns[name])(x, y, self.loss, **kwargs)
             for name in self.metric_names if name in M.loss_metric_fns
         }
+
         return {**output_metrics, **loss_metrics}
 
 

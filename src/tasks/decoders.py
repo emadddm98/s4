@@ -60,6 +60,8 @@ class SequenceDecoder(Decoder):
         if mode == 'ragged':
             assert not use_lengths
 
+        print(d_output, "d_output in SequenceDecoder")
+
     def forward(self, x, state=None, lengths=None, l_output=None):
         """
         x: (n_batch, l_seq, d_model)
@@ -303,6 +305,9 @@ def _instantiate(decoder, model=None, dataset=None):
     dataset_args = utils.config.extract_attrs_from_obj(
         dataset, *dataset_attrs.get(name, [])
     )
+
+    print("***Dataset args:***", dataset_args)
+
     model_args = utils.config.extract_attrs_from_obj(model, *model_attrs.get(name, []))
     # Instantiate decoder
     obj = utils.instantiate(registry, decoder, *model_args, *dataset_args)

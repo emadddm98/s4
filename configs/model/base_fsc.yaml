@@ -4,8 +4,8 @@ defaults:
 _name_: model
 prenorm: true
 transposed: false
-n_layers: 2 #4
-d_model: 64 #256
+n_layers: 4 #2
+d_model: 64  #128 #67% 64
 bidirectional: false  # Different from inner layer's bidirectional, just concatenate a forward and reverse layer
 residual: R
 pool:

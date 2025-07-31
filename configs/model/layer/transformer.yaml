@@ -1,6 +1,6 @@
 - _name_: mha
-  causal: true
-  n_heads: 8
+  causal: false #true
+  n_heads: 4 #8
   dropout: null
   bias: True
   add_bias_kv: False

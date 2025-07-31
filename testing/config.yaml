@@ -1,0 +1,154 @@
+train:
+  seed: 0
+  name: null
+  interval: epoch
+  monitor: val/accuracy
+  mode: max
+  ema: 0.0
+  test: false
+  debug: false
+  ignore_warnings: false
+  state:
+    mode: null
+    n_context: 0
+    n_context_eval: ${.n_context}
+  ckpt: null
+  optimizer_param_grouping:
+    bias_weight_decay: false
+    normalization_weight_decay: false
+  disable_dataset: false
+  validate_at_start: false
+  pretrained_model_path: null
+  pretrained_model_strict_load: true
+  pretrained_model_state_hook:
+    _name_: null
+  post_init_hook:
+    _name_: null
+  layer_decay:
+    _name_: null
+    decay: 0.7
+  track_grad_norms: false
+tolerance:
+  logdir: ./resume
+  id: null
+wandb: null
+trainer:
+  accelerator: gpu
+  strategy: auto
+  devices: 1
+  accumulate_grad_batches: 1
+  max_epochs: 200
+  gradient_clip_val: null
+  log_every_n_steps: 10
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  enable_model_summary: false
+loader:
+  batch_size: 50
+  num_workers: 4
+  pin_memory: true
+  drop_last: true
+  train_resolution: 1
+  eval_resolutions:
+  - 1
+  - 2
+dataset:
+  _name_: fsc
+  dropped_rate: 0.0
+  length: 16000
+  __l_max: ${.length}
+task:
+  _name_: base
+  loss: cross_entropy
+  metrics:
+  - accuracy
+  torchmetrics: null
+optimizer:
+  _name_: adamw
+  lr: 0.001
+  weight_decay: 0.0
+  betas:
+  - 0.9
+  - 0.999
+scheduler:
+  _name_: plateau
+  mode: ${train.mode}
+  factor: 0.2
+  patience: 20
+  min_lr: 0.0
+encoder: linear
+decoder:
+  _name_: sequence
+  mode: pool
+model:
+  layer:
+    _name_: s4
+    d_state: 32
+    channels: 1
+    bidirectional: false
+    gate: null
+    gate_act: id
+    bottleneck: null
+    activation: gelu
+    mult_act: null
+    final_act: glu
+    postact: null
+    initializer: null
+    weight_norm: false
+    tie_dropout: ${oc.select:model.tie_dropout,null}
+    layer: fftconv
+    mode: nplr
+    init: legs
+    measure: null
+    rank: 1
+    dt_min: 0.001
+    dt_max: 0.1
+    dt_transform: softplus
+    lr:
+      dt: 0.001
+      A: 0.001
+      B: 0.001
+    wd: 0.0
+    n_ssm: 1
+    drop_kernel: 0.0
+    deterministic: false
+    l_max: ${oc.select:dataset.__l_max,null}
+    verbose: true
+  _name_: model
+  prenorm: true
+  transposed: false
+  n_layers: 2
+  d_model: 128
+  bidirectional: false
+  residual: R
+  pool:
+    _name_: pool
+    stride: 1
+    expand: null
+  norm: layer
+  dropout: 0.0
+  tie_dropout: true
+  track_norms: true
+  encoder: null
+  decoder: null
+callbacks:
+  learning_rate_monitor:
+    logging_interval: ${train.interval}
+  timer:
+    step: true
+    inter_step: false
+    epoch: true
+    val: true
+  params:
+    total: true
+    trainable: true
+    fixed: true
+  model_checkpoint:
+    monitor: ${train.monitor}
+    mode: ${train.mode}
+    save_top_k: 1
+    save_last: true
+    dirpath: checkpoints/
+    filename: ${train.monitor}
+    auto_insert_metric_name: false
+    verbose: true

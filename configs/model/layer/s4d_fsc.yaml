@@ -1,0 +1,5 @@
+defaults:
+  - s4_fsc
+
+mode: diag
+init: diag-lin
