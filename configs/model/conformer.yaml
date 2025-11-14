@@ -1,0 +1,11 @@
+# @package _global_
+# Conformer model config for FSC
+
+conformer:
+  _name_: conformer
+  d_model: 144
+  n_layers: 6
+  dropout: 0.2
+  ff_dim: 288
+  num_heads: 4
+  conv_kernel_size: 31

@@ -1,0 +1,301 @@
+_wandb:
+    value:
+        cli_version: 0.21.0
+        e:
+            d9xg6vlidbzixg69duxbwld2a3ik8n8l:
+                args:
+                    - experiment=fsc/s4-fsc
+                cpu_count: 18
+                cpu_count_logical: 36
+                cudaVersion: "12.2"
+                disk:
+                    /:
+                        total: "502390513664"
+                        used: "407886516224"
+                email: mousavi.em98@gmail.com
+                executable: /usr/bin/python
+                git:
+                    commit: 9511d540136d64acf0493247c75021cc2e22bf84
+                    remote: https://github.com/emadddm98/s4.git
+                gpu: NVIDIA GeForce RTX 3090
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 10496
+                      memoryTotal: "25769803776"
+                      name: NVIDIA GeForce RTX 3090
+                      uuid: GPU-ac7cb996-ac42-04e0-ea7d-f39dae793d82
+                host: fe15cf5f6d43
+                memory:
+                    total: "134760665088"
+                os: Linux-6.8.0-65-generic-x86_64-with-glibc2.35
+                program: -m train
+                python: CPython 3.10.12
+                root: .
+                startedAt: "2025-10-03T19:07:40.246517Z"
+                writerId: d9xg6vlidbzixg69duxbwld2a3ik8n8l
+        m:
+            - "1": trainer/global_step
+              "6":
+                - 3
+              "7": []
+            - "2": '*'
+              "5": 1
+              "6":
+                - 1
+              "7": []
+        python_version: 3.10.12
+        t:
+            "1":
+                - 1
+                - 5
+                - 9
+                - 11
+                - 41
+                - 40
+                - 49
+                - 50
+                - 51
+                - 53
+                - 103
+            "2":
+                - 1
+                - 5
+                - 9
+                - 11
+                - 41
+                - 40
+                - 49
+                - 50
+                - 51
+                - 53
+                - 103
+            "3":
+                - 7
+                - 16
+                - 66
+            "4": 3.10.12
+            "5": 0.21.0
+            "6": 4.53.3
+            "12": 0.21.0
+            "13": linux-x86_64
+callbacks:
+    value:
+        early_stopping:
+            _target_: pytorch_lightning.callbacks.EarlyStopping
+            min_delta: 0
+            mode: max
+            monitor: val/accuracy
+            patience: 20
+        learning_rate_monitor:
+            logging_interval: step
+        model_checkpoint:
+            auto_insert_metric_name: false
+            dirpath: checkpoints/
+            filename: val/accuracy
+            mode: max
+            monitor: val/accuracy
+            save_last: true
+            save_top_k: 1
+            verbose: true
+        params:
+            fixed: true
+            total: true
+            trainable: true
+        timer:
+            epoch: true
+            inter_step: false
+            step: true
+            val: true
+dataset:
+    value:
+        _name_: fsc
+        dropped_rate: 0
+        hop_length: 160
+        length: 16000
+        melkwargs: null
+        mfcc: false
+        n_fft: 400
+        n_mels: 32
+        n_mfcc: 20
+        sample_rate: 16000
+decoder:
+    value:
+        _name_: sequence
+        mode: pool
+encoder:
+    value:
+        _name_: conv_stack
+        layers:
+            "0":
+                activation: gelu
+                dropout: 0.1
+                kernel_size: 16
+                norm: layer
+                out_channels: 96
+                padding: 6
+                stride: 4
+            "1":
+                activation: gelu
+                dropout: 0.1
+                kernel_size: 8
+                norm: layer
+                out_channels: 96
+                padding: 3
+                stride: 2
+            "2":
+                activation: gelu
+                dropout: 0.1
+                kernel_size: 4
+                norm: layer
+                out_channels: 96
+                padding: 1
+                stride: 2
+loader:
+    value:
+        batch_size: 128
+        drop_last: true
+        eval_resolutions:
+            "0": 1
+        num_workers: 4
+        pin_memory: true
+        train_resolution: 1
+model:
+    value:
+        _name_: model
+        bidirectional: true
+        d_model: 96
+        decoder: null
+        dropout: 0.2
+        encoder: null
+        layer:
+            _name_: s4
+            activation: gelu
+            bidirectional: true
+            bottleneck: null
+            channels: 1
+            d_state: 64
+            deterministic: false
+            drop_kernel: 0
+            dropout: 0.15
+            dt_max: 0.1
+            dt_min: 0.001
+            dt_transform: exp
+            final_act: glu
+            gate: null
+            gate_act: id
+            init: legs
+            initializer: null
+            l_max: 16000
+            layer: fftconv
+            lr:
+                A: 0.001
+                B: 0.001
+                dt: 0.001
+            measure: null
+            mode: nplr
+            mult_act: null
+            n_ssm: 1
+            postact: null
+            rank: 1
+            tie_dropout: false
+            verbose: true
+            wd: 0
+            weight_norm: false
+        n_layers: 4
+        norm: layer
+        pool:
+            _name_: pool
+            expand: null
+            stride: 1
+        prenorm: true
+        residual: R
+        tie_dropout: false
+        track_norms: true
+        transposed: false
+optimizer:
+    value:
+        _name_: adamw
+        betas:
+            "0": 0.9
+            "1": 0.999
+        eps: 1e-08
+        lr: 0.0012
+        weight_decay: 0.01
+params/fixed:
+    value: 0
+params/total:
+    value: 439014
+params/trainable:
+    value: 439014
+scheduler:
+    value:
+        _name_: cosine_warmup
+        num_training_steps: 8000
+        num_warmup_steps: 500
+task:
+    value:
+        _name_: base
+        loss:
+            _name_: soft_cross_entropy
+            label_smoothing: 0.1
+        loss_val:
+            _name_: cross_entropy
+        metrics:
+            "0": accuracy
+        torchmetrics: null
+tolerance:
+    value:
+        id: null
+        logdir: ./resume
+train:
+    value:
+        ckpt: null
+        debug: false
+        disable_dataset: false
+        ema: 0
+        ignore_warnings: false
+        interval: step
+        layer_decay:
+            _name_: null
+            decay: 0.7
+        mode: max
+        monitor: val/accuracy
+        name: null
+        optimizer_param_grouping:
+            bias_weight_decay: false
+            normalization_weight_decay: false
+        post_init_hook:
+            _name_: null
+        pretrained_model_path: null
+        pretrained_model_state_hook:
+            _name_: null
+        pretrained_model_strict_load: true
+        seed: 0
+        state:
+            mode: null
+            n_context: 0
+            n_context_eval: 0
+        test: false
+        track_grad_norms: false
+        validate_at_start: false
+trainer:
+    value:
+        accelerator: gpu
+        accumulate_grad_batches: 1
+        devices: 1
+        enable_model_summary: true
+        gradient_clip_val: 1
+        limit_train_batches: 1
+        limit_val_batches: 1
+        log_every_n_steps: 10
+        max_epochs: 200
+        strategy: auto
+wandb:
+    value:
+        group: ""
+        id: null
+        job_type: training
+        mode: online
+        project: hippo
+        save_dir: .

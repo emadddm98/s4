@@ -1,5 +1,7 @@
 """Decoders that interface between targets and model."""
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +9,7 @@ from einops import rearrange, reduce
 
 import src.models.nn.utils as U
 import src.utils as utils
+from src.models.sequence.backbones.model import SequenceModel
 
 
 class Decoder(nn.Module):
@@ -256,6 +259,136 @@ class PackedDecoder(Decoder):
         return x
 
 
+class S4Decoder(Decoder):
+    """S4-based decoder head for sequence classification.
+
+    This module applies an additional S4 `SequenceModel` stack on top of the
+    backbone outputs and projects the pooled representation to the target
+    dimensionality (e.g., intent classes for FSC).
+
+    The constructor receives the backbone output dimension followed by the
+    dataset output dimension via the registry plumbing. Additional keyword
+    arguments configure the inner S4 stack in the same manner as existing
+    sequence backbones.
+    """
+
+    def __init__(
+        self,
+        encoder_dim: int,
+        num_classes: int,
+        *,
+    d_model: Optional[int] = None,
+        aggregate: str = "mean",
+        lengths_key: str = "lengths",
+        input_dropout: float = 0.0,
+    dropinp: Optional[float] = None,
+        layer=None,
+        residual=None,
+        norm=None,
+        pool=None,
+        prenorm: bool = True,
+        n_layers: int = 1,
+        n_repeat: int = 1,
+        dropout: float = 0.0,
+        tie_dropout: bool = False,
+        transposed: bool = False,
+        track_norms: bool = False,
+        **sequence_kwargs,
+    ):
+        super().__init__()
+
+        if layer is None:
+            raise ValueError("S4Decoder requires a 'layer' configuration for the inner SequenceModel.")
+
+        self.aggregate = aggregate.lower()
+        self.lengths_key = lengths_key
+        self.num_classes = num_classes
+
+        effective_d_model = d_model or encoder_dim
+        dropinp = input_dropout if dropinp is None else dropinp
+
+        if effective_d_model != encoder_dim:
+            self.input_proj = nn.Linear(encoder_dim, effective_d_model)
+        else:
+            self.input_proj = nn.Identity()
+
+        self.sequence_model = SequenceModel(
+            d_model=effective_d_model,
+            n_layers=n_layers,
+            transposed=transposed,
+            dropout=dropout,
+            tie_dropout=tie_dropout,
+            prenorm=prenorm,
+            n_repeat=n_repeat,
+            layer=layer,
+            residual=residual,
+            norm=norm,
+            pool=pool,
+            track_norms=track_norms,
+            dropinp=dropinp,
+            **sequence_kwargs,
+        )
+
+        self.output = nn.Linear(self.sequence_model.d_output, num_classes)
+
+    def forward(self, x, state=None, lengths=None, **kwargs):
+        if lengths is None and self.lengths_key in kwargs:
+            lengths = kwargs[self.lengths_key]
+
+        x = self.input_proj(x)
+        x, state = self.sequence_model(x, state=state)
+        x = self._reduce_sequence(x, lengths)
+        x = self.output(x)
+        return x, {"state": state}
+
+    def step(self, x, state=None, **kwargs):
+        x = self.input_proj(x)
+        x, state = self.sequence_model.step(x, state=state)
+        x = self.output(x)
+        return x, {"state": state}
+
+    def _reduce_sequence(self, x, lengths):
+        if self.aggregate == "none":
+            return x
+
+        if lengths is not None:
+            lengths = torch.as_tensor(lengths, device=x.device)
+            max_len = x.size(1)
+            mask = torch.arange(max_len, device=x.device)[None, :] < lengths[:, None]
+        else:
+            mask = None
+
+        if self.aggregate in {"mean", "avg"}:
+            if mask is None:
+                return x.mean(dim=1)
+            masked = x * mask.unsqueeze(-1)
+            denom = mask.sum(dim=1, keepdim=True).clamp(min=1)
+            return masked.sum(dim=1) / denom
+
+        if self.aggregate == "sum":
+            return x.sum(dim=1) if mask is None else (x * mask.unsqueeze(-1)).sum(dim=1)
+
+        if self.aggregate == "max":
+            if mask is None:
+                return x.max(dim=1).values
+            masked = x.masked_fill(~mask.unsqueeze(-1), float("-inf"))
+            return masked.max(dim=1).values
+
+        if self.aggregate in {"last", "final"}:
+            if mask is None or lengths is None:
+                return x[:, -1]
+            idx = (lengths - 1).clamp(min=0)
+            return x[torch.arange(x.size(0), device=x.device), idx]
+
+        if self.aggregate == "first":
+            return x[:, 0]
+
+        if self.aggregate in {"cls", "start"}:
+            return x[:, 0]
+
+        raise ValueError(f"Unknown aggregation mode '{self.aggregate}' for S4Decoder.")
+
+
 # For every type of encoder/decoder, specify:
 # - constructor class
 # - list of attributes to grab from dataset
@@ -270,6 +403,8 @@ registry = {
     "retrieval": RetrievalDecoder,
     "state": StateDecoder,
     "pack": PackedDecoder,
+
+    "s4": S4Decoder,
 }
 model_attrs = {
     "linear": ["d_output"],
@@ -278,6 +413,7 @@ model_attrs = {
     "retrieval": ["d_output"],
     "state": ["d_state", "state_to_tensor"],
     "forecast": ["d_output"],
+    "s4": ["d_output"],
 }
 
 dataset_attrs = {
@@ -288,6 +424,7 @@ dataset_attrs = {
     # TODO rename d_output to n_classes?
     "state": ["d_output"],
     "forecast": ["d_output", "l_output"],
+    "s4": ["d_output"],
 }
 
 

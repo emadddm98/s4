@@ -5,6 +5,7 @@ import torch
 import torchvision
 from einops.layers.torch import Rearrange
 from src.utils import permutations
+import math
 
 from src.dataloaders.base import default_data_path, ImageResolutionSequenceDataset, ResolutionSequenceDataset, SequenceDataset
 
@@ -271,25 +272,134 @@ class SpeechCommands(ResolutionSequenceDataset):
             all_classes=self.all_classes,
         )
 
-#The Class for Fluent Speech Commands dataset
-
 class FSC(ResolutionSequenceDataset):
     _name_ = "fsc"
 
     @property
     def init_defaults(self):
         return {
+            "mfcc": True,
+            "n_mfcc": 20,
+            "n_mels": 32,
+            "n_fft": 400,
+            "hop_length": 160,
+            "melkwargs": None,
+            "dropped_rate": 0.0,
             "length": 16000,
+            "sample_rate": 16000,
+            "all_classes": False,
         }
 
     @property
     def d_input(self):
-        return 1
+        # Return appropriate input dimension based on mfcc flag
+        if self.mfcc:
+            return self.n_mfcc  # Number of MFCC coefficients
+        else:
+            return 1  # Raw waveform is 1D
 
     @property
     def d_output(self):
-        # 31 intents in FSC
-        return 31
+        # Return actual number of action classes from dataset
+        return self._d_output
+
+    @property
+    def l_output(self):
+        return 0  # Classification task
+
+    @property
+    def L(self):
+        # Return sequence length based on mfcc flag
+        if self.mfcc:
+            # Calculate number of frames based on STFT parameters
+            return math.ceil(self.length / self.hop_length)
+        else:
+            return self.length
+
+    def setup(self):
+        self.data_dir = self.data_dir or default_data_path / "fluent_speech_commands_dataset"
+        
+        # Whether to use full FSC or just the action labels
+        if self.all_classes:
+            from src.dataloaders.datasets.fsc_full import get_fsc_datasets
+        else:
+            from src.dataloaders.datasets.fsc import get_fsc_datasets
+            
+        # from src.dataloaders.datasets.fsc import get_fsc_datasets
+        
+        # from src.dataloaders.datasets.fsc_full import get_fsc_datasets
+
+        # Build melkwargs (only used if mfcc is True)
+        if self.melkwargs is not None:
+            melkwargs = self.melkwargs
+        else:
+            melkwargs = {
+                "n_mels": self.n_mels,
+                "n_fft": self.n_fft,
+                "hop_length": self.hop_length,
+                "win_length": self.n_fft,
+                "center": True,
+                "f_min": 0.0,
+            }
+
+        train, val, test = get_fsc_datasets(
+            self.data_dir,
+            max_length=self.length,
+            target_sr=self.sample_rate,
+            mfcc=self.mfcc,
+            n_mfcc=self.n_mfcc,
+            n_mels=self.n_mels,
+            melkwargs=melkwargs,
+            dropped_rate=self.dropped_rate,  # Pass dropped_rate to dataset
+        )
+
+        self.dataset_train = train
+        self.dataset_val = val
+        self.dataset_test = test
+
+        # Derive dynamic dimensions
+        if self.mfcc:
+            # MFCC mode: (frames, n_mfcc)
+            sample, _ = train[0]
+            self._d_input = sample.shape[1]  # n_mfcc
+            self._L = sample.shape[0]  # number of frames
+        else:
+            # Raw waveform mode: (length, 1)
+            sample, _ = train[0]
+            self._d_input = sample.shape[1]  # 1
+            self._L = sample.shape[0]
+
+        self._d_output = len(train.intents)  # Number of action classes (should be 6)
+
+
+# New: FSC with random split from training set (80/10/10)
+class FSC_RandomSplit(ResolutionSequenceDataset):
+    _name_ = "fsc_randomsplit"
+
+    @property
+    def init_defaults(self):
+        return {
+            "mfcc": True,
+            "n_mfcc": 20,
+            "n_mels": 32,
+            "n_fft": 400,
+            "hop_length": 160,
+            "melkwargs": None,
+            "dropped_rate": 0.0,
+            "length": 16000,
+            "sample_rate": 16000,
+        }
+
+    @property
+    def d_input(self):
+        if self.mfcc:
+            return self.n_mfcc
+        else:
+            return 1
+
+    @property
+    def d_output(self):
+        return self._d_output
 
     @property
     def l_output(self):
@@ -297,12 +407,312 @@ class FSC(ResolutionSequenceDataset):
 
     @property
     def L(self):
-        return self.length
+        if self.mfcc:
+            return math.ceil(self.length / self.hop_length)
+        else:
+            return self.length
 
     def setup(self):
         self.data_dir = self.data_dir or default_data_path / "fluent_speech_commands_dataset"
-        from src.dataloaders.datasets.fsc import get_fsc_datasets
-        train, val, test = get_fsc_datasets(self.data_dir, max_length=self.L)
+        from src.dataloaders.datasets.fsc_randomsplit import get_fsc_datasets
+
+        if self.melkwargs is not None:
+            melkwargs = self.melkwargs
+        else:
+            melkwargs = {
+                "n_mels": self.n_mels,
+                "n_fft": self.n_fft,
+                "hop_length": self.hop_length,
+                "win_length": self.n_fft,
+                "center": True,
+                "f_min": 0.0,
+            }
+
+        train, val, test = get_fsc_datasets(
+            self.data_dir,
+            max_length=self.length,
+            target_sr=self.sample_rate,
+            mfcc=self.mfcc,
+            n_mfcc=self.n_mfcc,
+            n_mels=self.n_mels,
+            melkwargs=melkwargs,
+            # dropped_rate=self.dropped_rate,
+        )
+
         self.dataset_train = train
         self.dataset_val = val
         self.dataset_test = test
+
+        if self.mfcc:
+            sample, _ = train[0]
+            self._d_input = sample.shape[1]
+            self._L = sample.shape[0]
+        else:
+            sample, _ = train[0]
+            self._d_input = sample.shape[1]
+            self._L = sample.shape[0]
+
+        self._d_output = len(train.intents)
+
+
+class FSCImage(SequenceDataset):
+    """FSC dataset that outputs 2D spectrograms as images for vision models."""
+    
+    _name_ = "fsc_image"
+
+    @property
+    def init_defaults(self):
+        return {
+            "n_mfcc": 40,
+            "n_mels": 80,
+            "n_fft": 400,
+            "hop_length": 160,
+            "dropped_rate": 0.0,
+            "max_length": 16000,
+            "target_sr": 16000,
+        }
+
+    @property
+    def d_input(self):
+        # For vision models, this is typically channels (1 for grayscale spectrogram)
+        return 1
+
+    @property
+    def d_output(self):
+        return self._d_output
+
+    @property
+    def l_output(self):
+        return 0  # Classification task
+
+    @property
+    def L(self):
+        # For 2D images, L is not really used, but we return total pixels
+        # Image shape: (1, n_mfcc, n_frames)
+        n_frames = math.ceil(self.max_length / self.hop_length)
+        return self.n_mfcc * n_frames
+
+    def setup(self):
+        self.data_dir = self.data_dir or default_data_path / "fluent_speech_commands_dataset"
+        
+        from src.dataloaders.datasets.fsc_image import get_fsc_image_datasets
+
+        train, val, test = get_fsc_image_datasets(
+            self.data_dir,
+            max_length=self.max_length,
+            target_sr=self.target_sr,
+            n_mfcc=self.n_mfcc,
+            n_mels=self.n_mels,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            dropped_rate=self.dropped_rate,
+        )
+
+        self.dataset_train = train
+        self.dataset_val = val
+        self.dataset_test = test
+
+        # Get sample to determine dimensions
+        # Output shape: (1, n_mfcc, n_frames)
+        sample, _ = train[0]
+        self._d_output = len(train.intents)  # Number of action classes (should be 6)
+        
+        print(f"FSC Image dataset loaded: {len(train)} train, {len(val)} val, {len(test)} test")
+        print(f"Image shape: {sample.shape}, Output classes: {self._d_output}")
+
+class FSCAug(ResolutionSequenceDataset):
+    _name_ = "fsc_aug"
+
+    @property
+    def init_defaults(self):
+        return {
+            "mfcc": True,
+            "n_mfcc": 40,
+            "n_mels": 64,
+            "n_fft": 400,
+            "hop_length": 160,
+            "melkwargs": None,
+            "dropped_rate": 0.0,
+            "length": 16000,
+            "sample_rate": 16000,
+            "augment": True,
+            "time_mask_param": 30,
+            "freq_mask_param": 15,
+        }
+
+    @property
+    def d_input(self):
+        return self.n_mfcc if self.mfcc else 1
+
+    @property
+    def d_output(self):
+        return self._d_output
+
+    @property
+    def l_output(self):
+        return 0
+
+    @property
+    def L(self):
+        if self.mfcc:
+            return math.ceil(self.length / self.hop_length)
+        else:
+            return self.length
+
+    def setup(self):
+        self.data_dir = self.data_dir or default_data_path / "fluent_speech_commands_dataset"
+        from src.dataloaders.datasets.fsc_aug import get_fsc_aug_datasets
+
+        if self.melkwargs is not None:
+            melkwargs = self.melkwargs
+        else:
+            melkwargs = {
+                "n_mels": self.n_mels,
+                "n_fft": self.n_fft,
+                "hop_length": self.hop_length,
+                "win_length": self.n_fft,
+                "center": True,
+                "f_min": 0.0,
+            }
+
+        train, val, test = get_fsc_aug_datasets(
+            self.data_dir,
+            max_length=self.length,
+            target_sr=self.sample_rate,
+            mfcc=self.mfcc,
+            n_mfcc=self.n_mfcc,
+            n_mels=self.n_mels,
+            melkwargs=melkwargs,
+            dropped_rate=self.dropped_rate,
+            augment=self.augment,
+            time_mask_param=self.time_mask_param,
+            freq_mask_param=self.freq_mask_param,
+        )
+
+        self.dataset_train = train
+        self.dataset_val = val
+        self.dataset_test = test
+
+        if self.mfcc:
+            sample, _ = train[0]
+            self._d_input = sample.shape[1]
+            self._L = sample.shape[0]
+        else:
+            sample, _ = train[0]
+            self._d_input = sample.shape[1]
+            self._L = sample.shape[0]
+
+        self._d_output = len(train.intents)
+
+
+class FSCMultiLabel(ResolutionSequenceDataset):
+    _name_ = "fsc_multilabel"
+
+    @property
+    def init_defaults(self):
+        return {
+            "mfcc": True,
+            "n_mfcc": 64,
+            "n_mels": 80,
+            "n_fft": 400,
+            "hop_length": 160,
+            "melkwargs": None,
+            "dropped_rate": 0.0,
+            "length": 16000,
+            "sample_rate": 16000,
+            "all_classes": True,
+        }
+
+    @property
+    def d_input(self):
+        return self.n_mfcc if self.mfcc else 1
+
+    @property
+    def d_output(self):
+        return self._d_output
+
+    @property
+    def l_output(self):
+        return 0
+
+    @property
+    def L(self):
+        if self.mfcc:
+            return math.ceil(self.length / self.hop_length)
+        else:
+            return self.length
+
+    def setup(self):
+        self.data_dir = self.data_dir or default_data_path / "fluent_speech_commands_dataset"
+        from src.dataloaders.datasets.fsc_multilabel import FSCMultiLabelDataset
+
+        if self.melkwargs is not None:
+            melkwargs = self.melkwargs
+        else:
+            melkwargs = {
+                "n_mels": self.n_mels,
+                "n_fft": self.n_fft,
+                "hop_length": self.hop_length,
+                "win_length": self.n_fft,
+                "center": True,
+                "f_min": 0.0,
+            }
+
+        # Create train dataset first to get label mappings
+        train = FSCMultiLabelDataset(
+            self.data_dir,
+            split="train",
+            max_length=self.length,
+            target_sr=self.sample_rate,
+            mfcc=self.mfcc,
+            n_mfcc=self.n_mfcc,
+            n_mels=self.n_mels,
+            melkwargs=melkwargs,
+            dropped_rate=self.dropped_rate,
+        )
+
+        # Use train mappings for val and test
+        val = FSCMultiLabelDataset(
+            self.data_dir,
+            split="valid",
+            max_length=self.length,
+            target_sr=self.sample_rate,
+            mfcc=self.mfcc,
+            n_mfcc=self.n_mfcc,
+            n_mels=self.n_mels,
+            melkwargs=melkwargs,
+            dropped_rate=self.dropped_rate,
+            component_label2idx=train.label2idx,
+        )
+
+        test = FSCMultiLabelDataset(
+            self.data_dir,
+            split="test",
+            max_length=self.length,
+            target_sr=self.sample_rate,
+            mfcc=self.mfcc,
+            n_mfcc=self.n_mfcc,
+            n_mels=self.n_mels,
+            melkwargs=melkwargs,
+            dropped_rate=self.dropped_rate,
+            component_label2idx=train.label2idx,
+        )
+
+        self.dataset_train = train
+        self.dataset_val = val
+        self.dataset_test = test
+
+        sample, labels = train[0]
+        if self.mfcc:
+            self._d_input = sample.shape[1]
+            self._L = sample.shape[0]
+        else:
+            self._d_input = sample.shape[1]
+            self._L = sample.shape[0]
+
+        # For multilabel, d_output should be tuple of (n_actions, n_objects, n_locations)
+        self._d_output = (
+            len(train.label2idx['action']),
+            len(train.label2idx['object']),
+            len(train.label2idx['location'])
+        )

@@ -1,6 +1,6 @@
 _name_: nonaka/inception
-num_classes: 2
-input_channels: 8
+num_classes: 6  #2
+input_channels: 1 #8
 kernel_size: 40
 depth: 6
 bottleneck_size: 32

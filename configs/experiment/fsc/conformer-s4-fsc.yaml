@@ -1,0 +1,79 @@
+# @package _global_
+# Conformer-S4 for FSC Intent Classification
+# Based on paper: S4 decoder with Conformer-style architecture
+
+defaults:
+  - /pipeline: fsc
+  - /model: conformer_s4
+  - override /trainer: default
+  - override /dataset: fsc_image
+  - override /loader: default
+
+model:
+  _name_: conformer_s4
+  d_input: 1
+  d_output: 31
+  d_model: 128
+  n_layers: 3
+  d_state: 64
+  d_ffn: 384
+  kernel_size: 31
+  dropout: 0.2
+  layer_dropout: 0.1
+  prenorm: true
+
+dataset:
+  _name_: fsc_image
+  max_length: 16000
+  target_sr: 16000
+  n_mfcc: 40
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  dropped_rate: 0.0
+
+task:
+  loss:
+    _name_: soft_cross_entropy
+    label_smoothing: 0.1
+  loss_val:
+    _name_: cross_entropy
+
+loader:
+  batch_size: 64
+  num_workers: 4
+  pin_memory: true
+  drop_last: true
+  train_resolution: null
+  eval_resolutions: null
+
+optimizer:
+  _name_: adamw
+  lr: 0.0015
+  weight_decay: 0.015
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 500
+  num_training_steps: 8000
+
+# No encoder needed - model handles melspectrogram input directly
+encoder: null
+
+# Decoder handled internally by ConformerS4Model
+decoder: null
+
+callbacks:
+  early_stopping:
+    _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: "val/accuracy"
+    mode: "max"
+    patience: 15
+    min_delta: 0.002
+
+trainer:
+  max_epochs: 100
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1

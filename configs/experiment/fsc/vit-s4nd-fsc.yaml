@@ -1,0 +1,111 @@
+# @package _global_
+defaults:
+  - /pipeline: fsc
+  - /model: vit/vit
+  - /callbacks: checkpoint  # Add early stopping and checkpointing
+  - override /model/layer: s4nd
+  - override /dataset: fsc_image
+  - override /loader: default  # Use default loader instead of resolution
+  - override /scheduler: plateau  # Use plateau scheduler instead of cosine_warmup
+
+model:
+  _name_: vit_b_16
+  dropout: 0.15  # Reduced from 0.2 - too much can hurt learning
+  drop_path_rate: 0.15  # Reduced from 0.2
+  img_size: [40, 100]
+  patch_size: [4, 10]
+  in_chans: 1
+  num_classes: 6
+  d_model: 192  # Reduced from 256 to 192 (sweet spot)
+  depth: 5  # Reduced from 6 to 5 layers
+  expand: 3  # Reduced from 4 to 3
+  norm: layer
+  layer_reps: 1
+  use_cls_token: false
+  use_pos_embed: false
+
+  layer:
+    _name_: s4nd
+    d_state: 64
+    final_act: glu
+    bidirectional: true
+    channels: 1
+    activation: gelu
+    mode: nplr
+    init: legs
+    rank: 1
+    dt_min: 0.001
+    dt_max: 0.1
+    dt_transform: exp
+    lr:
+      dt: 0.001
+      A: 0.001
+      B: 0.001
+    n_ssm: 1
+    contract_version: 1
+    l_max: 100
+
+dataset:
+  _name_: fsc_image
+  max_length: 16000
+  target_sr: 16000
+  n_mfcc: 40  # Height of spectrogram
+  n_mels: 80
+  n_fft: 400
+  hop_length: 160
+  dropped_rate: 0.0
+  # Output: (1, 40, 100) spectrogram as image
+
+task:
+  loss:
+    _name_: soft_cross_entropy
+    label_smoothing: 0.15  # Reduced from 0.2 to 0.15 (balanced)
+  loss_val:
+    _name_: cross_entropy
+
+loader:
+  batch_size: 128
+  num_workers: 8
+  pin_memory: true
+  drop_last: true
+  train_resolution: null
+  eval_resolutions: null
+
+trainer:
+  max_epochs: 200  # INCREASED to 200 - let early stopping decide when to stop!
+  precision: 16
+  devices: 1
+  accumulate_grad_batches: 1
+
+train:
+  seed: 2222
+  monitor: val/accuracy
+  mode: max
+  interval: epoch
+  ema: 0.999  # Reduced from 0.9999 to 0.999 (more responsive)
+  optimizer_param_grouping:
+    bias_weight_decay: false
+    normalization_weight_decay: false
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.08  # Reduced from 0.1 to 0.08
+
+scheduler:
+  factor: 0.5  # Halve LR when plateau
+  patience: 8  # REDUCED from 10 to 8 (more responsive)
+  threshold: 0.005  # REDUCED from 0.01 to 0.005 (more sensitive)
+  cooldown: 3  # REDUCED from 5 to 3
+  min_lr: 1e-6
+
+# Early stopping configuration
+callbacks:
+  early_stopping:
+    monitor: "val/accuracy"
+    mode: "max"
+    patience: 25  # Stop if no improvement for 25 epochs
+    min_delta: 0.002  # Must improve by at least 0.2%
+    verbose: true
+
+encoder: null
+decoder: null

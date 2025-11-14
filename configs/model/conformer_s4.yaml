@@ -1,0 +1,15 @@
+# Conformer-S4 model configuration
+_name_: conformer_s4
+
+d_input: 1  # Raw waveform input
+d_output: 31  # FSC action classes
+d_model: 256  # Model dimension (smaller than paper's 512 for speed)
+n_layers: 6  # Encoder layers
+d_state: 64  # S4 state dimension
+d_ffn: 1024  # Feed-forward dimension (4x d_model)
+kernel_size: 31  # Conformer conv kernel
+dropout: 0.15  # Moderate dropout
+layer_dropout: 0.1  # Stochastic depth
+prenorm: true
+
+layer: null  # Not used for this architecture

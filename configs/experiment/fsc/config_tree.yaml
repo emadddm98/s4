@@ -1,0 +1,207 @@
+# @package _global_
+defaults:
+  - /pipeline: fsc
+  - /model: s4_fsc
+  - override /trainer: default
+  - override /dataset: fsc_randomsplit
+  - override /loader: default
+
+# train:
+#   seed: 0
+#   name: null
+#   interval: epoch #for ReduceLROnPlateau scheduler
+#   monitor: val/accuracy # Needed for plateau scheduler; NOT TO BE CONFUSED WITH TEST ACCURACY
+#   mode: max
+#   ema: 0.0
+#   test: false
+#   debug: false
+#   ignore_warnings: false
+#   state:
+#     mode: null
+#     n_context: 0
+#     n_context_eval: 0
+#   ckpt: null
+#   optimizer_param_grouping:
+#     bias_weight_decay: false
+#     normalization_weight_decay: false
+#   disable_dataset: false
+#   validate_at_start: false
+#   pretrained_model_path: null
+#   pretrained_model_strict_load: true
+#   pretrained_model_state_hook:
+#     _name_: null
+#   post_init_hook:
+#     _name_: null
+#   layer_decay:
+#     _name_: null
+#     decay: 0.7
+#   track_grad_norms: false
+
+# tolerance:
+#   logdir: ./resume
+#   id: null
+
+# wandb:
+#   project: hippo
+#   group: ''
+#   job_type: training
+#   mode: online
+#   save_dir: .
+#   id: null
+
+# trainer:
+#   accelerator: gpu
+#   strategy: auto
+#   devices: 1
+#   accumulate_grad_batches: 1
+#   max_epochs: 200
+#   gradient_clip_val: 1.0
+#   log_every_n_steps: 10
+#   limit_train_batches: 1.0
+#   limit_val_batches: 1.0
+#   enable_model_summary: true
+
+loader:
+  batch_size: 64
+  num_workers: 8
+  pin_memory: true
+  drop_last: true
+  train_resolution: 1
+  eval_resolutions: [1]
+
+dataset:
+  _name_: fsc_randomsplit
+  mfcc: False
+
+# task:
+#   _name_: base
+#   loss:
+#     _name_: soft_cross_entropy
+#     label_smoothing: 0.1
+#   metrics:
+#     - accuracy
+#   torchmetrics: null
+#   loss_val:
+#     _name_: cross_entropy
+
+optimizer:
+  _name_: adamw
+  lr: 0.001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+scheduler:
+  _name_: plateau
+  patience: 5
+  factor: 0.5
+
+encoder:
+  _name_: conv_stack
+  layers:
+    - out_channels: 96
+      kernel_size: 16
+      stride: 4
+      padding: 6
+      activation: relu #gelu
+      norm: layer
+      dropout: 0.2 #0.1
+    - out_channels: 96
+      kernel_size: 8
+      stride: 2
+      padding: 3
+      activation: relu
+      norm: layer
+      dropout: 0.2
+    - out_channels: 96 #128
+      kernel_size: 4
+      stride: 2
+      padding: 1
+      activation: relu
+      norm: layer
+      dropout: 0.2
+
+decoder:
+  _name_: sequence
+  mode: pool
+
+model:
+  layer:
+    _name_: s4
+    d_state: 64 #80 #64
+    channels: 1
+    bidirectional: true
+    gate: null
+    gate_act: id
+    bottleneck: null
+    activation: relu #gelu
+    mult_act: null
+    final_act: glu
+    postact: null
+    initializer: null
+    weight_norm: false
+    tie_dropout: false
+    layer: fftconv
+    mode: nplr
+    init: legs
+    measure: null
+    rank: 1
+    dt_min: 0.001
+    dt_max: 0.1
+    dt_transform: exp
+    lr:
+      dt: 0.001
+      A: 0.001
+      B: 0.001
+    wd: 0.0
+    n_ssm: 2 #1
+    drop_kernel: 0.0
+    deterministic: false
+    l_max: ${dataset.length}
+    verbose: true
+    dropout: 0.15
+  _name_: model
+  prenorm: true
+  transposed: false
+  n_layers: 8 #6
+  d_model: 96
+  bidirectional: true
+  residual: R
+  pool:
+    _name_: pool
+    stride: 1
+    expand: null
+  norm: layer
+  dropout: 0.2
+  tie_dropout: false
+  track_norms: true
+  encoder: null
+  decoder: null
+
+# callbacks:
+#   early_stopping:
+#     _target_: pytorch_lightning.callbacks.EarlyStopping
+#     monitor: val/accuracy
+#     mode: max
+#     patience: 20
+#     min_delta: 0
+#   learning_rate_monitor:
+#     logging_interval: step
+#   timer:
+#     step: true
+#     inter_step: false
+#     epoch: true
+#     val: true
+#   params:
+#     total: true
+#     trainable: true
+#     fixed: true
+#   model_checkpoint:
+#     monitor: val/accuracy
+#     mode: max
+#     save_top_k: 1
+#     save_last: true
+#     dirpath: checkpoints/
+#     filename: val/accuracy
+#     auto_insert_metric_name: false
+#     verbose: true

@@ -117,6 +117,238 @@ class Conv1DEncoder(Encoder):
         x = self.conv(x.transpose(1, 2)).transpose(1, 2)
         return x
 
+
+class ConvStackEncoder(Encoder):
+    """Builds a configurable stack of 1D convolutions from raw waveform to model features.
+
+    Constructor signature: ConvStackEncoder(d_input, d_model, layers)
+    - d_input: dataset input channels (positional, provided by dataset)
+    - d_model: final model feature dimension (positional, provided by model)
+    - layers: list of dicts describing each conv layer. Each dict supports:
+        out_channels (int), kernel_size (int), stride (int), padding (int or 'same'), activation (gelu/relu/none)
+
+    The final layer's out_channels will be projected to d_model if it doesn't match.
+    """
+
+    def __init__(self, d_input, d_model, layers=None):
+        super().__init__()
+        if layers is None:
+            raise AssertionError("layers must be provided and be a list-like of layer specs")
+
+        # Convert ListConfig or other sequence types to a plain Python list
+        try:
+            layers_list = list(layers)
+        except Exception:
+            raise AssertionError("layers must be an iterable of layer spec dictionaries")
+
+        modules = []
+        in_ch = d_input
+        # Normalize specs to plain dicts for safe access
+        self.layer_specs = [dict(spec) if not isinstance(spec, dict) else spec for spec in layers_list]
+
+        for i, spec in enumerate(self.layer_specs):
+            out_ch = spec.get("out_channels")
+            if out_ch is None:
+                raise AssertionError(f"layer spec at index {i} missing 'out_channels'")
+            k = spec.get("kernel_size", 3)
+            s = spec.get("stride", 1)
+            p = spec.get("padding", 0)
+
+            block_modules = []
+            conv = nn.Conv1d(in_ch, out_ch, kernel_size=k, stride=s, padding=p)
+            block_modules.append(conv)
+
+            norm_type = spec.get("norm", "batch")
+            if norm_type == "batch":
+                block_modules.append(nn.BatchNorm1d(out_ch))
+            elif norm_type == "layer":
+                # Use GroupNorm with 1 group as LayerNorm for Conv1d
+                block_modules.append(nn.GroupNorm(num_groups=1, num_channels=out_ch))
+            else:
+                block_modules.append(nn.Identity())
+
+            pool_kernel = spec.get("pool_kernel_size", 2)
+            pool_stride = spec.get("pool_stride", 2)
+            block_modules.append(nn.MaxPool1d(kernel_size=pool_kernel, stride=pool_stride))
+
+            act = spec.get("activation", None)
+            if act is not None:
+                if act == "gelu":
+                    block_modules.append(nn.GELU())
+                elif act == "relu":
+                    block_modules.append(nn.ReLU())
+                # add others if needed
+
+            drop_p = spec.get("dropout", 0.0)
+            if drop_p and float(drop_p) > 0.0:
+                block_modules.append(nn.Dropout(p=float(drop_p)))
+
+            modules.append(nn.Sequential(*block_modules))
+            in_ch = out_ch
+
+        # Final projection to d_model if necessary
+        self.net = nn.ModuleList(modules)
+        self.final_out = in_ch
+        if self.final_out != d_model:
+            # 1x1 conv to project channels to d_model
+            self.proj = nn.Conv1d(self.final_out, d_model, kernel_size=1)
+        else:
+            self.proj = None
+
+        # No need for extra norm layers; handled in block_modules above
+        self.norm_layers = None
+
+    def forward(self, x):
+        # x: (B, L, D)
+        x = x.transpose(1, 2)  # (B, D, L)
+
+        for li, block in enumerate(self.net):
+            x_in = x
+            x = block(x)
+            # Per-block residual connection
+            if x.shape == x_in.shape:
+                x = x + x_in
+            else:
+                # Interpolate x_in to match x's sequence length if needed
+                if x_in.shape[2] != x.shape[2]:
+                    x_in_resized = F.interpolate(x_in, size=x.shape[2], mode="linear", align_corners=False)
+                else:
+                    x_in_resized = x_in
+                proj_res = nn.Conv1d(x_in_resized.shape[1], x.shape[1], kernel_size=1).to(x.device)
+                x = x + proj_res(x_in_resized)
+
+        if self.proj is not None:
+            x = self.proj(x)
+
+        x = x.transpose(1, 2)  # (B, L, D)
+        return x
+
+class Conv2DEncoder(Encoder):
+    """For encoding Mel-spectrograms or images into a sequence of patches/features.
+
+    Arguments:
+      - in_channels: input channels (usually 1 for Mel-spectrograms)
+      - out_channels: output channels
+      - kernel_size: tuple (height, width)
+      - stride: tuple (height, width)
+      - padding: tuple (height, width)
+      - activation: activation function (gelu/relu/none)
+      - norm: normalization type (batch/none)
+      - pool: pooling type (max/none)
+      - pool_kernel_size: tuple
+      - pool_stride: tuple
+      - dropout: float
+    """
+    def __init__(self, in_channels=1, out_channels=64, kernel_size=(3,3), stride=(1,1), padding=(1,1), activation="gelu", norm="batch", pool="max", pool_kernel_size=(2,2), pool_stride=(2,2), dropout=0.2):
+        super().__init__()
+        # Ensure compatibility with Hydra ListConfig and lists
+        if not isinstance(kernel_size, tuple):
+            kernel_size = tuple(list(kernel_size))
+        if not isinstance(stride, tuple):
+            stride = tuple(list(stride))
+        if not isinstance(padding, tuple):
+            padding = tuple(list(padding))
+        if not isinstance(pool_kernel_size, tuple):
+            pool_kernel_size = tuple(list(pool_kernel_size))
+        if not isinstance(pool_stride, tuple):
+            pool_stride = tuple(list(pool_stride))
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding)
+        self.norm = nn.BatchNorm2d(out_channels) if norm == "batch" else nn.Identity()
+        self.pool = nn.MaxPool2d(kernel_size=pool_kernel_size, stride=pool_stride) if pool == "max" else nn.Identity()
+        if activation == "gelu":
+            self.act = nn.GELU()
+        elif activation == "relu":
+            self.act = nn.ReLU()
+        else:
+            self.act = nn.Identity()
+        self.dropout = nn.Dropout2d(dropout) if dropout > 0 else nn.Identity()
+
+    def forward(self, x):
+        # x: (B, 1, H, W) for Mel-spectrograms
+        x = x.unsqueeze(1)
+        x = self.conv(x)
+        x = self.norm(x)
+        x = self.pool(x)
+        x = self.act(x)
+        x = self.dropout(x)
+        # flatten spatial dims to sequence
+        B, C, H, W = x.shape
+        x = x.view(B, C, H * W).transpose(1, 2)  # (B, seq_len, C)
+        return x
+    
+class Conv2DStackEncoder(Encoder):
+    """
+    Stacked Conv2D layers for encoding 2D data like Mel-spectrograms.
+
+    Args:
+        in_channels: input channels
+        d_model: output channels per layer and final output
+        n_layers: number of conv layers
+        kernel_size: int or tuple
+        stride: int or tuple
+        padding: int or tuple
+        activation: activation function
+        norm: normalization type
+        pool: pooling type
+        pool_kernel_size: int or tuple
+        pool_stride: int or tuple
+        dropout: float
+    """
+    def __init__(self, in_channels=1, d_model=256, n_layers=2, kernel_size=3, stride=1, padding=1, activation='gelu', norm='batch', pool='max', pool_kernel_size=2, pool_stride=2, dropout=0.0):
+        super().__init__()
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        if isinstance(stride, int):
+            stride = (stride, stride)
+        if isinstance(padding, int):
+            padding = (padding, padding)
+        if isinstance(pool_kernel_size, int):
+            pool_kernel_size = (pool_kernel_size, pool_kernel_size)
+        if isinstance(pool_stride, int):
+            pool_stride = (pool_stride, pool_stride)
+
+        self.layers = nn.ModuleList()
+        for i in range(n_layers):
+            self.layers.append(
+                nn.Conv2d(
+                    in_channels if i == 0 else d_model,
+                    d_model,
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    padding=padding,
+                )
+            )
+            if norm == 'batch':
+                self.layers.append(nn.BatchNorm2d(d_model))
+            if activation == 'gelu':
+                self.layers.append(nn.GELU())
+            elif activation == 'relu':
+                self.layers.append(nn.ReLU())
+            else:
+                self.layers.append(nn.Identity())
+            if dropout > 0:
+                self.layers.append(nn.Dropout2d(dropout))
+
+        if pool == 'max':
+            # Ensure compatibility with Hydra ListConfig and lists
+            if not isinstance(pool_kernel_size, tuple):
+                pool_kernel_size = tuple(list(pool_kernel_size))
+            if not isinstance(pool_stride, tuple):
+                pool_stride = tuple(list(pool_stride))
+            self.pool = nn.MaxPool2d(kernel_size=pool_kernel_size, stride=pool_stride)
+        else:
+            self.pool = nn.Identity()
+
+    def forward(self, x):
+        if x.dim() == 3:
+            x = x.unsqueeze(1)
+        for layer in self.layers:
+            x = layer(x)
+        x = self.pool(x)
+        B, C, H, W = x.shape
+        x = x.view(B, C, H * W).transpose(1, 2)  # (B, seq_len, C)
+        return x
+
 class LayerEncoder(Encoder):
     """Use an arbitary SequenceModule layer"""
 
@@ -284,6 +516,29 @@ class OneHotEncoder(Encoder):
         return F.one_hot(x.squeeze(-1), self.d_model).float()
 
 
+# TransformerEncoder for sequence feature extraction
+class TransformerEncoder(Encoder):
+    """Transformer encoder for sequence feature extraction (uses nn.TransformerEncoder)."""
+    def __init__(self, d_input, d_model, n_layers=2, n_heads=4, dim_feedforward=256, dropout=0.1, activation="relu"):
+        super().__init__()
+        self.input_proj = nn.Linear(d_input, d_model) if d_input != d_model else nn.Identity()
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation=activation,
+            batch_first=True
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers) #, dropout=dropout)
+
+    def forward(self, x, **kwargs):
+        # x: (B, L, D)
+        x = self.input_proj(x)
+        x = self.encoder(x)
+        return x
+
+
 class Conv3DPatchEncoder(Encoder):
     """For encoding 3D data (e.g. videos) into a sequence of patches.
 
@@ -429,6 +684,11 @@ registry = {
     "timestamp_embedding": TimestampEmbeddingEncoder,
     "tsindex_embedding": TSIndexEmbeddingEncoder,
     "layer": LayerEncoder,
+    
+    "conv_stack": ConvStackEncoder,
+    "conv2d": Conv2DEncoder,
+    "conv2d_stack": Conv2DStackEncoder,
+    "transformer": TransformerEncoder,
 }
 dataset_attrs = {
     "embedding": ["n_tokens"],
@@ -438,6 +698,7 @@ dataset_attrs = {
     "time": ["n_tokens_time"],
     "onehot": ["n_tokens"],
     "conv1d": ["d_input"],
+    "conv_stack": ["d_input"],
     "patch2d": ["d_input"],
     "tsindex_embedding": ["n_ts"],
 }
@@ -450,6 +711,7 @@ model_attrs = {
     "time": ["d_model"],
     "onehot": ["d_model"],
     "conv1d": ["d_model"],
+    "conv_stack": ["d_model"],
     "patch2d": ["d_model"],
     "eegage": ["d_model"],
     "timestamp_embedding": ["d_model"],

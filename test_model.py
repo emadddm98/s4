@@ -16,59 +16,14 @@ def get_action_labels(csv_path):
     print(actions)
     return actions
 
-model = SequenceModel(
-    d_model=128,
-    n_layers=2,
-    transposed=False,
-    dropout=0.0,
-    tie_dropout=True,
-    prenorm=True,
-    bidirectional=False,
-    n_repeat=1,
-    layer=[{
-        'd_state': 32,
-        'channels': 1,
-        'bidirectional': False,
-        'gate': None,
-        'gate_act': 'id',
-        'bottleneck': None,
-        'activation': 'gelu',
-        'mult_act': None,
-        'final_act': 'glu',
-        'postact': None,
-        'initializer': None,
-        'weight_norm': False,
-        'tie_dropout': True,
-        'layer': 'fftconv',
-        'mode': 'nplr',
-        'init': 'legs',
-        'measure': None,
-        'rank': 1,
-        'dt_min': 0.001,
-        'dt_max': 0.1,
-        'dt_transform': 'softplus',
-        'lr': {'dt': 0.001, 'A': 0.001, 'B': 0.001},
-        'wd': 0.0,
-        'n_ssm': 1,
-        'drop_kernel': 0.0,
-        'deterministic': False,
-        'l_max': 16000,
-        'verbose': True,
-        'dropout': 0.0,
-        'transposed': False,
-        '_name_': 's4'
-    }],
-    residual='R',
-    norm='layer',
-    pool={'stride': 1, 'expand': None, '_name_': 'pool'},
-    track_norms=True,
-    dropinp=0.0
-)
+model = SequenceModel()
 
-encoder = nn.Linear(1, 128)
-decoder = nn.Linear(128, NUM_CLASSES)
+# encoder = nn.Linear(1, 128)
+encoder = nn.Identity()
+# decoder = nn.Linear(128, NUM_CLASSES)
+decoder = SequenceModel()
 
-ckpt = torch.load(CKPT_PATH, map_location="cpu")
+ckpt = torch.load(CKPT_PATH, map_location="cuda")
 model.load_state_dict(ckpt["state_dict"], strict=False)
 
 # Load encoder weights
@@ -114,6 +69,32 @@ def predict_action(wav_path, actions):
         return actions[pred]
     else:
         return f"Unknown action index: {pred}"
+
+def test_with_dummy_data():
+    if not torch.cuda.is_available():
+        print("CUDA is not available. Running on CPU.")
+        device = "cpu"
+    else:
+        device = "cuda"
+    dummy_input = torch.randn(1, 16000, 1).to(device)
+    encoder.to(device)
+    model.to(device)
+    decoder.to(device)
+    with torch.no_grad():
+        x_encoded = encoder(dummy_input)
+        logits = model(x_encoded)[0]
+        if logits.ndim == 3:
+            logits = logits[:, -1]
+        logits = decoder(logits)
+        print("Dummy logits shape:", logits.shape)
+        if device == "cuda":
+            print("CUDA memory summary:")
+            print(torch.cuda.memory_summary())
+        else:
+            print("CPU test complete. No CUDA memory info.")
+
+# Uncomment to run dummy data test
+test_with_dummy_data()
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

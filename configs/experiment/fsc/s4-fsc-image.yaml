@@ -1,0 +1,89 @@
+# @package _global_
+defaults:
+  - /pipeline: fsc
+  - /model: s4_fsc
+  - override /dataset: fsc_image
+  - override /loader: default  # Use default loader instead of resolution
+  # - override /model/layer: s4nd
+
+model:
+  _name_: model
+  prenorm: true
+  transposed: false
+  n_layers: 4  # REDUCED from 6 to 4 for memory
+  d_model: 64  # REDUCED from 128 to 64 for memory
+  bidirectional: true
+  residual: R
+  dropout: 0.1
+  tie_dropout: false
+  norm: layer
+  track_norms: true
+  
+  pool:
+    _name_: pool
+    stride: 1
+    expand: null
+
+  layer:
+    _name_: s4
+    d_state: 64  # REDUCED from 64 to 32 for memory
+    final_act: glu
+    bidirectional: true
+    channels: 1
+    activation: gelu
+    dt_transform: exp
+    n_ssm: 1
+
+dataset:
+  _name_: fsc_image
+  max_length: 16000
+  target_sr: 16000
+  n_mfcc: 20  # Height of spectrogram
+  n_mels: 32
+  n_fft: 400
+  hop_length: 160
+  dropped_rate: 0.0
+
+task:
+  loss:
+    _name_: soft_cross_entropy
+    label_smoothing: 0.15  # Reduced from 0.2 to 0.15 (balanced)
+  loss_val:
+    _name_: cross_entropy
+
+loader:
+  batch_size: 64
+  num_workers: 8
+  pin_memory: true
+  drop_last: true
+  train_resolution: null  # Remove resolution parameters from pipeline
+  eval_resolutions: null
+
+optimizer:
+  _name_: adamw
+  lr: 0.001  # INCREASED from 0.0003 for faster convergence
+  weight_decay: 0.05  # REDUCED from 0.1
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 2000  # REDUCED from 1000
+  num_training_steps: 20000  # REDUCED from 40000
+
+encoder:
+  _name_: patch2d  # Convert 2D spectrogram to sequence
+  filter_sizes: [4, 4]  # Patch size (height, width) - creates 5x25=125 patches from 20x100 image
+  flat: false
+
+decoder:
+  _name_: sequence
+  mode: pool  # Global pooling for classification
+
+callbacks:
+  early_stopping:
+    _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: "val/accuracy"
+    mode: "max"
+    patience: 25
+    min_delta: 0.001

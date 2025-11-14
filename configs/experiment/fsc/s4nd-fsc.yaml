@@ -1,0 +1,132 @@
+# @package _global_
+defaults:
+  - /pipeline: fsc
+  - /model: s4_fsc
+  - override /model/layer: s4nd
+
+model:
+  _name_: model
+  prenorm: true
+  transposed: false
+  n_layers: 4  # REDUCED from 6 to 4 for memory
+  d_model: 64  # REDUCED from 128 to 64 for memory
+  bidirectional: true
+  residual: R
+  dropout: 0.0
+  tie_dropout: false
+  norm: layer
+  track_norms: true
+  
+  pool:
+    _name_: pool
+    stride: 1
+    expand: null
+
+  layer:
+    _name_: s4nd
+    d_state: 32  # REDUCED from 64 to 32 for memory
+    final_act: glu
+    bidirectional: true
+    channels: 1
+    activation: gelu
+    mode: nplr
+    init: legs
+    rank: 1
+    dt_min: 0.001
+    dt_max: 0.1
+    dt_transform: exp
+    lr:
+      dt: 0.001
+      A: 0.001
+      B: 0.001
+    n_ssm: 1
+    deterministic: false
+    contract_version: 1
+    l_max: ${oc.select:dataset.__l_max,null}
+    verbose: true
+
+dataset:
+  _name_: fsc
+  mfcc: true
+  n_mfcc: 20  # REDUCED from 40 to 20 for memory
+  n_mels: 32  # REDUCED from 64 to 32 for memory
+  n_fft: 400
+  hop_length: 160
+  melkwargs: null
+  dropped_rate: 0.0
+  length: 16000
+  __l_max: ${.length}
+  sample_rate: 16000
+
+task:
+  loss:
+    _name_: soft_cross_entropy  # Use soft_cross_entropy for label smoothing
+    label_smoothing: 0.1
+
+loader:
+  batch_size: 32  # Keep at 32
+  num_workers: 8
+  pin_memory: true
+  drop_last: true
+  train_resolution: 1
+  eval_resolutions:
+    - 1
+
+trainer:
+  accelerator: gpu
+  strategy: auto
+  devices: 1
+  accumulate_grad_batches: 4  # Effective batch = 128
+  max_epochs: 150
+  # precision: 16  # Mixed precision for memory
+  gradient_clip_val: 1.0  # INCREASED from 0.5
+  log_every_n_steps: 10
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  enable_model_summary: true
+
+train:
+  seed: 2222
+  monitor: val/accuracy
+  mode: max
+  ema: 0.9999  # Exponential moving average for stable predictions
+  optimizer_param_grouping:
+    bias_weight_decay: false
+    normalization_weight_decay: false
+
+optimizer:
+  _name_: adamw
+  lr: 0.001  # INCREASED from 0.0003 for faster convergence
+  weight_decay: 0.05  # REDUCED from 0.1
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 2000  # REDUCED from 1000
+  num_training_steps: 20000  # REDUCED from 40000
+
+encoder:
+  _name_: linear  # Simple encoder for MFCC features
+
+decoder:
+  _name_: sequence
+  mode: pool  # Global pooling for classification
+
+callbacks:
+  model_checkpoint:
+    monitor: ${train.monitor}
+    mode: ${train.mode}
+    save_top_k: 1
+    save_last: true
+    dirpath: "checkpoints/"
+    filename: "fsc_s4nd_best"
+    auto_insert_metric_name: false
+    verbose: true
+  
+  early_stopping:
+    _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: "val/accuracy"
+    mode: "max"
+    patience: 25
+    min_delta: 0.001

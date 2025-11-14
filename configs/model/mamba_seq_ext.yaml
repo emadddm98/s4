@@ -1,0 +1,7 @@
+_name_: mamba_seq_ext
+d_model:      64       # hidden dim
+n_layers:     3        # depth
+dropout:      0.1
+use_residual: true
+ffn_dim:      256      # inner dim of the small FFN
+# any other Mamba2Simple kwargs (e.g. 'chunk_size', 'dt_limit') may follow

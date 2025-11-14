@@ -97,6 +97,8 @@ class DefaultCollateMixin:
     collate_args = []
 
     def _dataloader(self, dataset, **loader_args):
+        # Filter out None values
+        loader_args = {k: v for k, v in loader_args.items() if v is not None}
         collate_args = {k: loader_args[k] for k in loader_args if k in self.collate_args}
         loader_args = {k: loader_args[k] for k in loader_args if k not in self.collate_args}
         loader_cls = loader_registry[loader_args.pop("_name_", None)]

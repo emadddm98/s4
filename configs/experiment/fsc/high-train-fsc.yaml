@@ -1,0 +1,98 @@
+## High-train FSC experiment (all classes) following structure of s4-fsc.yaml
+# @package _global_
+defaults:
+    - /pipeline: fsc
+    - /model: s4_fsc
+    # - override /trainer: default
+    # - override /dataset: fsc
+
+model:  
+    _name_: model
+    prenorm: true
+    transposed: false
+    n_layers: 4
+    d_model: 96
+    bidirectional: true
+    residual: R
+    dropout: 0.2
+    tie_dropout: false
+    norm: layer
+    track_norms: true
+
+    pool:
+      _name_: pool
+      stride: 1
+      expand: null
+
+    layer:
+      _name_: s4
+      d_state: 64
+      final_act: glu
+      bidirectional: true
+      channels: 1
+      activation: gelu
+      dt_transform: exp
+      n_ssm: 1
+      dropout: 0.15
+
+dataset:
+    _name_: fsc
+    length: 16000
+    sample_rate: 16000
+    mfcc: false
+    dropped_rate: 0.0
+    all_classes: true    # Use full (action+object+location) intent set
+
+loader:
+    batch_size: 128
+    num_workers: 4
+    pin_memory: true
+    drop_last: true
+    train_resolution: 1
+    eval_resolutions: [1]
+
+optimizer:
+    _name_: adamw
+    lr: 0.0012
+    weight_decay: 0.01   # Slightly lower wd than s4-fsc baseline (0.05)
+    betas: [0.9, 0.999]
+    eps: 1e-8
+
+scheduler:
+    _name_: cosine_warmup
+    num_warmup_steps: 500
+    num_training_steps: 8000
+
+encoder:
+  _name_: conv_stack
+  layers:
+    - out_channels: 96
+      kernel_size: 16
+      stride: 4
+      padding: 6
+      activation: gelu
+      norm: layer
+      dropout: 0.10
+    - out_channels: 96
+      kernel_size: 8
+      stride: 2
+      padding: 3
+      activation: gelu
+      norm: layer
+      dropout: 0.10
+    - out_channels: 96
+      kernel_size: 4
+      stride: 2
+      padding: 1
+      activation: gelu
+      norm: layer
+      dropout: 0.10
+
+decoder:
+    _name_: sequence
+    mode: pool
+
+callbacks:
+    early_stopping:
+        patience: 10
+        min_delta: 0.003

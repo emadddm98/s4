@@ -1,0 +1,19 @@
+_name_: fsc_image
+
+# Audio parameters
+max_length: 16000
+target_sr: 16000
+
+# Spectrogram parameters (outputs 2D image)
+n_mfcc: 40  # Height of spectrogram
+n_mels: 80  # Mel bands for MFCC computation
+n_fft: 400  # ~25 ms @16 kHz
+hop_length: 160  # 10 ms hop
+
+# Subsampling
+dropped_rate: 0.0
+
+# Computed dimensions (for reference)
+# With max_length=16000, hop_length=160, center=True:
+# n_frames = ceil(16000/160) = 100
+# Output shape: (1, 40, 100) - single channel image

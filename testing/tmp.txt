@@ -1,0 +1,1486 @@
+giulia-mascarin: I would like to add the dataloader related to the Fluent Speech Commands dataset to the S4 Codebase as you can see. I have downloaded the FSC dataset under the ./s4/data/ directory (found in the fluent_speech_commands_dataset directory), help me write and then integrate a dataloader for it to then use one of the models available in the project (for example s4) to train a model for FSC dataset, for now the goal being a simple Intent Classification
+
+GitHub Copilot: To add Fluent Speech Commands (FSC) dataset support for intent classification in your S4 codebase, you need to:
+
+1. **Write a FSC dataset loader** (similar to sc.py).
+2. **Integrate it into your dataloader registry** (like basic.py).
+3. **(Optionally) Add a config entry** for easy training.
+4. **Test with an existing model** (e.g., S4).
+
+Below is a step-by-step guide with code.
+
+---
+
+## 1. Create the FSC Dataset Loader
+
+Create a new file:  
+`/workspace/stm/s4/src/dataloaders/datasets/fsc.py`
+
+````python
+"""Fluent Speech Commands dataset loader for intent classification."""
+
+import os
+import pathlib
+import torch
+import torchaudio
+import pandas as pd
+from torch.utils.data import Dataset
+
+class FSCIntentDataset(Dataset):
+    def __init__(self, root, split="train", transform=None, max_length=16000):
+        self.root = pathlib.Path(root)
+        self.split = split
+        self.transform = transform
+        self.max_length = max_length
+
+        # Load metadata
+        meta_file = self.root / f"{split}_data.csv"
+        if not meta_file.exists():
+            raise FileNotFoundError(f"Metadata file {meta_file} not found.")
+
+        self.meta = pd.read_csv(meta_file)
+        self.audio_dir = self.root / "wavs"
+
+        # Build intent label mapping
+        self.intents = sorted(self.meta["intent"].unique())
+        self.intent2idx = {intent: idx for idx, intent in enumerate(self.intents)}
+
+    def __len__(self):
+        return len(self.meta)
+
+    def __getitem__(self, idx):
+        row = self.meta.iloc[idx]
+        wav_path = self.audio_dir / row["path"]
+        waveform, sr = torchaudio.load(wav_path)
+        waveform = waveform.mean(dim=0)  # mono
+
+        # Pad or truncate
+        if len(waveform) < self.max_length:
+            pad = self.max_length - len(waveform)
+            waveform = torch.nn.functional.pad(waveform, (0, pad))
+        else:
+            waveform = waveform[:self.max_length]
+
+        label = self.intent2idx[row["intent"]]
+        if self.transform:
+            waveform = self.transform(waveform)
+        return waveform.unsqueeze(1), label  # (L, 1), label
+
+def get_fsc_datasets(root, max_length=16000):
+    train = FSCIntentDataset(root, split="train", max_length=max_length)
+    val = FSCIntentDataset(root, split="valid", max_length=max_length)
+    test = FSCIntentDataset(root, split="test", max_length=max_length)
+    return train, val, test
+````
+
+---
+
+## 2. Integrate into the Dataloader Registry
+
+Add a new class to basic.py:
+
+````python
+# ...existing code...
+
+class FSC(ResolutionSequenceDataset):
+    _name_ = "fsc"
+
+    @property
+    def init_defaults(self):
+        return {
+            "length": 16000,
+        }
+
+    @property
+    def d_input(self):
+        return 1
+
+    @property
+    def d_output(self):
+        # 31 intents in FSC
+        return 31
+
+    @property
+    def l_output(self):
+        return 0
+
+    @property
+    def L(self):
+        return self.length
+
+    def setup(self):
+        self.data_dir = self.data_dir or default_data_path / "fluent_speech_commands_dataset"
+        from src.dataloaders.datasets.fsc import get_fsc_datasets
+        train, val, test = get_fsc_datasets(self.data_dir, max_length=self.L)
+        self.dataset_train = train
+        self.dataset_val = val
+        self.dataset_test = test
+# ...existing code...
+````
+
+---
+
+## 3. (Optional) Add to Registry
+
+If you use a registry pattern, add `"fsc": FSC` to your dataset registry (wherever `SequenceDataset.registry` is defined).
+
+---
+
+## 4. Usage Example
+
+In your config, set:
+```yaml
+dataset:
+  _name_: fsc
+  length: 16000
+```
+Or, from Python:
+```python
+from src.dataloaders.basic import FSC
+dataset = FSC()
+dataset.setup()
+train_loader = dataset.train_dataloader(batch_size=32)
+```
+
+---
+
+## 5. Train a Model
+
+You can now use your standard S4 training pipeline, just set the dataset to `"fsc"` in your config.
+
+---
+
+**Note:**  
+- The FSC dataset must be organized as:
+  ```
+  ./s4/data/fluent_speech_commands_dataset/
+      wavs/
+      train_data.csv
+      valid_data.csv
+      test_data.csv
+  ```
+- Each CSV should have at least columns: `path` (relative to `wavs/`), `intent`.
+
+---
+
+Let me know if you want a ready-to-use config or further help!
+
+giulia-mascarin: can you tell me how for example the SpeechCommands class in instantiated in basic.py or in general these Dataset-related classes? How does _name_ variable have something to do with it??
+
+GitHub Copilot: Great question! In your codebase, the `_name_` variable is used as a **registry key** for each dataset class, allowing you to instantiate datasets by name from configuration files or code. Here’s how it works:
+
+---
+
+### 1. **Dataset Registration via `_name_`**
+
+In base.py, the base class for datasets (e.g., `SequenceDataset`, `ResolutionSequenceDataset`) uses a class-level registry:
+
+````python
+class SequenceDataset:
+    registry = {}
+
+    @property
+    def init_defaults(self):
+        return {}
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        cls.registry[cls._name_] = cls
+````
+
+- **What does this do?**  
+  Every time you define a subclass with a `_name_` attribute (e.g., `SpeechCommands` with `_name_ = "sc"`), it is automatically added to the `SequenceDataset.registry` dictionary with the key being the value of `_name_`.
+
+---
+
+### 2. **Instantiation by Name**
+
+When you want to instantiate a dataset, you can do so by name using the registry. For example, in your training code or config, you might have:
+
+```yaml
+dataset:
+  _name_: sc
+  length: 16000
+  # ...other args...
+```
+
+And in code (see `train.py`):
+
+````python
+self.dataset = SequenceDataset.registry[self.hparams.dataset._name_](
+    **self.hparams.dataset
+)
+````
+
+- **What does this do?**  
+  - Looks up the class in the registry using the `_name_` (e.g., `"sc"` for `SpeechCommands`).
+  - Instantiates it with the provided arguments.
+
+---
+
+### 3. **How does this work for `SpeechCommands`?**
+
+- In `basic.py`:
+
+    ```python
+    class SpeechCommands(ResolutionSequenceDataset):
+        _name_ = "sc"
+        # ...
+    ```
+
+- When you specify `_name_: sc` in your config, the code will instantiate `SpeechCommands`.
+
+---
+
+### 4. **Summary Table**
+
+| Class Name         | `_name_` Value | Registry Key | Instantiated by |
+|--------------------|----------------|-------------|-----------------|
+| `SpeechCommands`   | `"sc"`         | `"sc"`      | `_name_: sc`    |
+| `FSC`              | `"fsc"`        | `"fsc"`     | `_name_: fsc`   |
+| `MNIST`            | `"mnist"`      | `"mnist"`   | `_name_: mnist` |
+
+---
+
+### 5. **Why is this useful?**
+
+- **Modular:** You can add new datasets by just defining a new class with a unique `_name_`.
+- **Configurable:** You can switch datasets by changing a single line in your config.
+- **Automatic:** No need to manually update a registry; it’s handled by the base class.
+
+---
+
+**In summary:**  
+The `_name_` variable is the key that connects your config (or code) to the correct dataset class via an automatic registry. This enables flexible and modular dataset selection in your experiments.
+
+giulia-mascarin:    raise RuntimeError(f"Couldn't find appropriate backend to handle uri {uri} and format {format}.")
+RuntimeError: Couldn't find appropriate backend to handle uri /workspace/stm/s4/data/fluent_speech_commands_dataset/wavs/wavs/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav and format None.
+
+GitHub Copilot: This error means that `torchaudio.load()` cannot find or open the audio file at the given path.  
+Notice the path:  
+```
+/workspace/stm/s4/data/fluent_speech_commands_dataset/wavs/wavs/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav
+```
+There is a duplicated `wavs/wavs/` in the path.
+
+---
+
+## **How to Fix**
+
+**Check your FSC dataset loader code** (likely in `src/dataloaders/datasets/fsc.py`).  
+You probably have something like:
+
+```python
+self.audio_dir = self.root / "wavs"
+wav_path = self.audio_dir / row["path"]
+```
+
+But if `row["path"]` already starts with `wavs/`, this will result in `wavs/wavs/...`.
+
+---
+
+### **Solution**
+
+**Option 1: Remove "wavs/" from the CSV paths**
+
+- Edit your CSV files (`train_data.csv`, etc.) so that the `path` column does **not** start with `wavs/`, but with `speakers/...`.
+
+**Option 2: Fix the loader code to avoid double "wavs/"**
+
+Update your loader code to:
+
+````python
+# ...existing code...
+wav_path = self.root / row["path"]  # instead of self.audio_dir / row["path"]
+# ...existing code...
+````
+
+Or, if you want to keep using `self.audio_dir`, strip "wavs/" if present:
+
+````python
+# ...existing code...
+rel_path = row["path"]
+if rel_path.startswith("wavs/"):
+    rel_path = rel_path[len("wavs/"):]
+wav_path = self.audio_dir / rel_path
+# ...existing code...
+````
+
+---
+
+## **Summary**
+
+- The error is due to a duplicated "wavs/" in the constructed file path.
+- Fix either the CSV or the loader code so that the path is correct.
+
+---
+
+**Tip:**  
+You can check a few values of `row["path"]` in your CSV to confirm if they start with "wavs/".  
+If so, use Option 2 above. If not, Option 1 is cleaner.
+
+Let me know if you want the exact code change for your loader!
+
+giulia-mascarin:     raise RuntimeError(f"Couldn't find appropriate backend to handle uri {uri} and format {format}.")
+RuntimeError: Couldn't find appropriate backend to handle uri /workspace/stm/s4/data/fluent_speech_commands_dataset/wavs/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav and format None.
+
+GitHub Copilot: Your error is likely because of a **mismatch between the constructed audio path and the actual file location**.  
+Let's break down the issue:
+
+---
+
+### 1. **Your Loader Code**
+
+```python
+wav_path = self.audio_dir / row["path"]
+```
+- `self.audio_dir = self.root`
+- `row["path"]` is probably something like `"wavs/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav"`
+
+So the constructed path is:
+```
+/workspace/stm/s4/data/fluent_speech_commands_dataset/wavs/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav
+```
+
+---
+
+### 2. **Check: Does This File Exist?**
+
+Run this in your terminal:
+```sh
+ls /workspace/stm/s4/data/fluent_speech_commands_dataset/wavs/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav
+```
+If it **exists**, the path is correct.  
+If it **does not exist**, check if the actual path is:
+- `/workspace/stm/s4/data/fluent_speech_commands_dataset/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav`
+- or `/workspace/stm/s4/data/fluent_speech_commands_dataset/wavs/wavs/speakers/...` (double "wavs")
+
+---
+
+### 3. **How to Fix**
+
+#### **A. If your CSV `path` column starts with "wavs/" and your files are under `fluent_speech_commands_dataset/wavs/speakers/...`:**
+
+Keep your code as:
+```python
+self.audio_dir = self.root
+wav_path = self.audio_dir / row["path"]
+```
+**But make sure the files exist at that location.**
+
+#### **B. If your CSV `path` column starts with "speakers/" and your files are under `fluent_speech_commands_dataset/wavs/speakers/...`:**
+
+Change your code to:
+```python
+self.audio_dir = self.root / "wavs"
+wav_path = self.audio_dir / row["path"]
+```
+
+#### **C. If your CSV `path` column starts with "wavs/speakers/" but your files are under `fluent_speech_commands_dataset/wavs/speakers/...`:**
+
+You can strip the leading "wavs/" from the path:
+```python
+rel_path = row["path"]
+if rel_path.startswith("wavs/"):
+    rel_path = rel_path[len("wavs/"):]
+wav_path = self.audio_dir / rel_path
+```
+
+---
+
+### 4. **Summary: Recommended Fix**
+
+**Update your `__getitem__` method as follows:**
+````python
+def __getitem__(self, idx):
+    row = self.meta.iloc[idx]
+    rel_path = row["path"]
+    # Remove leading "wavs/" if present
+    if rel_path.startswith("wavs/"):
+        rel_path = rel_path[len("wavs/"):]
+    wav_path = self.audio_dir / "wavs" / rel_path
+    waveform, sr = torchaudio.load(wav_path)
+    waveform = waveform.mean(dim=0)  # mono
+
+    # Pad or truncate
+    if len(waveform) < self.max_length:
+        pad = self.max_length - len(waveform)
+        waveform = torch.nn.functional.pad(waveform, (0, pad))
+    else:
+        waveform = waveform[:self.max_length]
+
+    label = self.intent2idx[row["action"]]
+    if self.transform:
+        waveform = self.transform(waveform)
+    return waveform.unsqueeze(1), label  # (L, 1), label
+````
+
+---
+
+**Check your actual file structure and CSV, and adjust the above as needed.  
+This will resolve the "Couldn't find appropriate backend" error.**
+
+giulia-mascarin: THE FILE EXISTS AND THE ADDRESSING IS ALREADY CORREECT, THE ISSUE IS I THINK WITH THE DATALOADER CLASS THAT YOU SUGGEST ME TO WRITE 
+
+GitHub Copilot: Thank you for clarifying that the file exists and the path is correct.  
+Given this, the error:
+
+```
+RuntimeError: Couldn't find appropriate backend to handle uri ... and format None.
+```
+
+is **not** a path issue, but a **torchaudio backend issue**. This usually means:
+
+- The file is not a valid WAV file (corrupted or wrong format).
+- The file extension is not recognized.
+- The torchaudio backend (sox, soundfile) is not installed or not working.
+
+---
+
+## **How to Fix**
+
+### 1. **Check torchaudio backend**
+
+By default, torchaudio uses either `sox_io` or `soundfile` as backend.  
+If you don't have `libsox` or `libsndfile` installed, you may get this error.
+
+**Try this in your dev container:**
+```sh
+apt update
+apt install -y sox libsox-dev libsox-fmt-all libsndfile1
+```
+
+And in Python:
+```python
+import torchaudio
+print(torchaudio.list_audio_backends())
+```
+You should see at least `['sox_io', 'soundfile']`.
+
+---
+
+### 2. **Try Forcing the Backend**
+
+Add this at the top of your script (before loading any audio):
+
+```python
+import torchaudio
+torchaudio.set_audio_backend("sox_io")
+```
+or
+```python
+torchaudio.set_audio_backend("soundfile")
+```
+Try both if one fails.
+
+---
+
+### 3. **Check File Format**
+
+Make sure your files are actually WAV files.  
+Try running:
+```sh
+file /workspace/stm/s4/data/fluent_speech_commands_dataset/wavs/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav
+```
+You should see something like:  
+`RIFF (little-endian) data, WAVE audio...`
+
+If not, the file may be corrupted or not a WAV.
+
+---
+
+### 4. **Try Loading with soundfile**
+
+In your dataloader, try replacing:
+```python
+waveform, sr = torchaudio.load(wav_path)
+```
+with:
+```python
+import soundfile as sf
+waveform, sr = sf.read(str(wav_path))
+waveform = torch.tensor(waveform)
+if waveform.ndim > 1:
+    waveform = waveform.mean(axis=1)
+```
+If this works, the issue is with the torchaudio backend.
+
+---
+
+## **Summary**
+
+- Install `sox` and `libsndfile1` in your container.
+- Set the torchaudio backend explicitly.
+- Check that your files are valid WAVs.
+- Try loading with `soundfile` as a fallback.
+
+---
+
+**If you want, I can show you how to update your dataloader to try both backends and fall back to soundfile if needed. Let me know!**
+
+giulia-mascarin: now this is the issue:
+
+RuntimeError: torchaudio_sox::load_audio_file() Expected a value of type 'str' for argument '_0' but instead found type 'PosixPath'.
+Position: 0
+Value: PosixPath('/workspace/stm/s4/data/fluent_speech_commands_dataset/wavs/speakers/7NqqnAOPVVSKnxyv/8b863c90-4627-11e9-bc65-55b32b211b66.wav')
+Declaration: torchaudio_sox::load_audio_file(str _0, int? _1, int? _2, bool? _3, bool? _4, str? _5) -> (Tensor _0, int _1)
+Cast error details: Unable to cast Python instance of type <class 'pathlib.PosixPath'> to C++ type '?' (#define PYBIND11_DETAILED_ERROR_MESSAGES or compile in debug mode for details)
+
+GitHub Copilot: This error is because `torchaudio.load()` expects a string path, **not** a `Path` object.
+
+**Fix:**  
+Convert `wav_path` to a string when calling `torchaudio.load()`.
+
+Update your `__getitem__` method as follows:
+
+````python
+def __getitem__(self, idx):
+    row = self.meta.iloc[idx]
+    wav_path = self.audio_dir / row["path"]
+    waveform, sr = torchaudio.load(str(wav_path))  # Convert to string
+    waveform = waveform.mean(dim=0)  # mono
+
+    # Pad or truncate
+    if len(waveform) < self.max_length:
+        pad = self.max_length - len(waveform)
+        waveform = torch.nn.functional.pad(waveform, (0, pad))
+    else:
+        waveform = waveform[:self.max_length]
+
+    label = self.intent2idx[row["action"]]
+    if self.transform:
+        waveform = self.transform(waveform)
+    return waveform.unsqueeze(1), label  # (L, 1), label
+````
+
+This will resolve the `PosixPath` type error.
+
+giulia-mascarin: Error executing job with overrides: ['dataset=fsc', 'wandb=null']
+Traceback (most recent call last):
+  File "/workspace/stm/s4/train.py", line 828, in main
+    train(config)
+  File "/workspace/stm/s4/train.py", line 734, in train
+    trainer.fit(model)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 531, in fit
+    call._call_and_handle_interrupt(
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/call.py", line 42, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 570, in _fit_impl
+    self._run(model, ckpt_path=ckpt_path)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 975, in _run
+    results = self._run_stage()
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 1018, in _run_stage
+    self.fit_loop.run()
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/fit_loop.py", line 201, in run
+    self.advance()
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/fit_loop.py", line 354, in advance
+    self.epoch_loop.run(self._data_fetcher)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/training_epoch_loop.py", line 133, in run
+    self.advance(data_fetcher)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/training_epoch_loop.py", line 218, in advance
+    batch_output = self.automatic_optimization.run(trainer.optimizers[0], kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/optimization/automatic.py", line 185, in run
+    self._optimizer_step(kwargs.get("batch_idx", 0), closure)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/optimization/automatic.py", line 260, in _optimizer_step
+    call._call_lightning_module_hook(
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/call.py", line 140, in _call_lightning_module_hook
+    output = fn(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/core/module.py", line 1256, in optimizer_step
+    optimizer.step(closure=optimizer_closure)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/core/optimizer.py", line 155, in step
+    step_output = self._strategy.optimizer_step(self._optimizer, closure, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/strategies/strategy.py", line 225, in optimizer_step
+    return self.precision_plugin.optimizer_step(optimizer, model=model, closure=closure, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/plugins/precision/precision_plugin.py", line 114, in optimizer_step
+    return optimizer.step(closure=closure, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/optim/optimizer.py", line 391, in wrapper
+    out = func(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/optim/optimizer.py", line 76, in _use_grad
+    ret = func(self, *args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/optim/adamw.py", line 165, in step
+    loss = closure()
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/plugins/precision/precision_plugin.py", line 101, in _wrap_closure
+    closure_result = closure()
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/optimization/automatic.py", line 140, in __call__
+    self._result = self.closure(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/optimization/automatic.py", line 126, in closure
+    step_output = self._step_fn()
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/loops/optimization/automatic.py", line 307, in _training_step
+    training_step_output = call._call_strategy_hook(trainer, "training_step", *kwargs.values())
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/call.py", line 287, in _call_strategy_hook
+    output = fn(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/strategies/strategy.py", line 367, in training_step
+    return self.model.training_step(*args, **kwargs)
+  File "/workspace/stm/s4/train.py", line 403, in training_step
+    loss = self._shared_step(batch, batch_idx, prefix="train")
+  File "/workspace/stm/s4/train.py", line 321, in _shared_step
+    x, y, w = self.forward(batch)
+  File "/workspace/stm/s4/train.py", line 302, in forward
+    x, state = self.model(x, **w, state=self._state)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1532, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1541, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/stm/s4/src/models/sequence/backbones/model.py", line 125, in forward
+    outputs, state = layer(outputs, *args, state=prev_state, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1532, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1541, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/stm/s4/src/models/sequence/backbones/block.py", line 105, in forward
+    y_for, new_state = self.layer(y, state=state, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1532, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1541, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/stm/s4/src/models/sequence/modules/s4block.py", line 168, in forward
+    y, state = self.layer(x, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1532, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1541, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/workspace/stm/s4/src/models/sequence/kernels/fftconv.py", line 115, in forward
+    y = torch.fft.irfft(y_f, n=l_kernel+L)[..., :L] # (B C H L)
+torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.53 GiB. GPU 
+
+GitHub Copilot: You are now running into a **CUDA out of memory** error during training:
+
+```
+torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.53 GiB. GPU 
+```
+
+This is a common issue when your batch size, model size, or input sequence length is too large for your GPU.
+
+---
+
+## **How to Fix**
+
+### 1. **Reduce Batch Size**
+
+The most effective and immediate fix is to lower your batch size.  
+In your config (e.g., `configs/dataset/fsc.yaml` or your main config), set:
+
+```yaml
+loader:
+  batch_size: 4  # or even 2 or 1, depending on your GPU
+```
+
+Or override from the command line:
+
+```sh
+python train.py dataset=fsc loader.batch_size=4
+```
+
+---
+
+### 2. **Reduce Sequence Length**
+
+If possible, reduce the `length` parameter in your dataset config:
+
+```yaml
+length: 8000  # instead of 16000
+```
+
+---
+
+### 3. **Use Gradient Accumulation**
+
+If you need a large effective batch size, use gradient accumulation:
+
+```yaml
+trainer:
+  accumulate_grad_batches: 4
+```
+
+---
+
+### 4. **Use a Smaller Model**
+
+Reduce model size (e.g., number of layers, hidden size) in your model config.
+
+---
+
+### 5. **Monitor GPU Usage**
+
+You can monitor GPU memory usage with:
+
+```sh
+watch nvidia-smi
+```
+
+---
+
+## **Summary**
+
+- Lower `batch_size` in your config.
+- Optionally, reduce `length` or model size.
+- Use gradient accumulation if needed.
+
+**Try lowering the batch size first. This almost always resolves OOM errors.**
+
+giulia-mascarin: can you check this codebase and tell me after how many epochs of 'val/accuracy' not being in top 1 is the training process stopped? where is it parameterized?
+
+GitHub Copilot: In your codebase, **early stopping** is controlled by the [PyTorch Lightning `EarlyStopping` callback](https://pytorch-lightning.readthedocs.io/en/stable/api/pytorch_lightning.callbacks.EarlyStopping.html), which monitors a metric (like `val/accuracy`) and stops training if it doesn't improve for a specified number of epochs (`patience`).
+
+### Where is it parameterized?
+
+- The relevant config is in checkpoint.yaml and (optionally) in a similar `early_stopping.yaml` file.
+- The `patience` parameter determines **how many epochs** of no improvement before stopping.
+
+#### Example (from your codebase, commented out):
+
+```yaml
+# configs/callbacks/checkpoint.yaml
+
+# early_stopping:
+#   _target_: pytorch_lightning.callbacks.EarlyStopping
+#   monitor: "val/acc" # name of the logged metric which determines when model is improving
+#   mode: "max" # can be "max" or "min"
+#   patience: 100 # how many epochs of not improving until training stops
+#   min_delta: 0 # minimum change in the monitored metric needed to qualify as an improvement
+```
+
+- **`patience: 100`** means training will stop if `val/acc` does not improve for 100 epochs.
+
+### How is it activated?
+
+- For early stopping to be active, you need to **uncomment** and include the `early_stopping` callback in your experiment config, typically under the `callbacks` section.
+- Example:
+  ```yaml
+  callbacks:
+    early_stopping:
+      _target_: pytorch_lightning.callbacks.EarlyStopping
+      monitor: val/accuracy
+      mode: max
+      patience: 20
+      min_delta: 0.001
+  ```
+
+### Summary
+
+- **Default:** Early stopping is **not active** unless you add it to your config.
+- **Parameter:** The number of epochs is set by `patience` in the `early_stopping` callback config.
+- **Location:** See checkpoint.yaml (commented out) or add your own `early_stopping.yaml`.
+
+---
+
+**If you want to enable early stopping, add the above block to your experiment config and set `patience` as desired.**
+
+Similar code found with 1 license type
+
+giulia-mascarin: can you check why when I run this train.py script using pipeline=fsc model=s4_fsc options, the script doesn't show me the model summary and essentially jumps into showing me the Epochs and accuracy... Normally, the model summary should come just before this stages
+
+GitHub Copilot: The **model summary** in PyTorch Lightning is typically shown at the start of training, but only if a [ModelSummary callback](https://lightning.ai/docs/pytorch/stable/api/pytorch_lightning.callbacks.ModelSummary.html) is present in the trainer's callbacks. In your codebase, this is handled by the config system and the `create_trainer` function in train.py.
+
+### Why you don't see the model summary
+
+- In your configs, the `callbacks` section (see `configs/config.yaml`) only includes:
+  ```yaml
+  callbacks:
+    - base
+    - checkpoint
+    # - rich # RichProgressBar and RichModelSummary
+  ```
+  The `rich` callback (which would include a rich model summary) is **commented out**.
+- In your `create_trainer` function, callbacks are only instantiated if present in the config:
+  ```python
+  if "callbacks" in config:
+      for _name_, callback in config.callbacks.items():
+          ...
+          callbacks.append(utils.instantiate(registry.callbacks, callback))
+  ```
+- The registry in registry.py includes:
+  ```python
+  "rich_model_summary":    "pytorch_lightning.callbacks.RichModelSummary",
+  "rich_progress_bar":     "pytorch_lightning.callbacks.RichProgressBar",
+  ```
+  but these are not active unless you add them to your config.
+
+### How to enable the model summary
+
+**Option 1: Add the rich model summary callback**
+
+Add the following to your experiment or main config (e.g., config.yaml or your pipeline config):
+
+```yaml
+callbacks:
+  rich_model_summary:
+    _target_: pytorch_lightning.callbacks.RichModelSummary
+    max_depth: 2  # or whatever depth you want
+```
+
+Or, for the standard summary:
+
+```yaml
+callbacks:
+  model_summary:
+    _target_: pytorch_lightning.callbacks.ModelSummary
+    max_depth: 2
+```
+
+**Option 2: Use the rich callback group**
+
+Uncomment or add the `rich` callback in your config:
+
+```yaml
+callbacks:
+  - base
+  - checkpoint
+  - rich
+```
+If `rich` is a group that includes both `RichModelSummary` and `RichProgressBar`, this will enable the summary.
+
+**Option 3: Command line override**
+
+You can also add the callback via command line:
+```sh
+python train.py pipeline=fsc model=s4_fsc callbacks.rich_model_summary="_target_=pytorch_lightning.callbacks.RichModelSummary,max_depth=2"
+```
+
+---
+
+### Summary
+
+- **You don't see the model summary because the relevant callback is not enabled in your config.**
+- **To fix:** Add `rich_model_summary` or `model_summary` to your `callbacks` config.
+
+---
+
+**Let me know if you want the exact YAML snippet to paste into your config!**
+
+giulia-mascarin: Error executing job with overrides: ['wandb=null', 'pipeline=fsc', 'model=s4_fsc']
+Traceback (most recent call last):
+  File "/workspace/stm/s4/train.py", line 828, in main
+    train(config)
+  File "/workspace/stm/s4/train.py", line 698, in train
+    trainer = create_trainer(config)
+  File "/workspace/stm/s4/train.py", line 647, in create_trainer
+    callbacks.append(utils.instantiate(registry.callbacks, callback))
+  File "/workspace/stm/s4/src/utils/config.py", line 101, in instantiate
+    return obj()
+TypeError: EarlyStopping.__init__() got an unexpected keyword argument '_target_'
+
+GitHub Copilot: The error:
+
+```
+TypeError: EarlyStopping.__init__() got an unexpected keyword argument '_target_'
+```
+
+means that your config for the `EarlyStopping` callback is being passed directly to the constructor, but it still contains the `_target_` key, which is not a valid argument for the PyTorch Lightning `EarlyStopping` class.
+
+### Why does this happen?
+
+Your code uses a utility function `utils.instantiate` to instantiate callbacks from config. This function expects the config dict to have a `_target_` key (which tells Hydra what class to instantiate), but it **should remove** `_target_` before passing the rest as kwargs to the constructor.
+
+If `_target_` is not removed, you get this error.
+
+---
+
+## How to Fix
+
+### 1. **Fix the instantiate utility**
+
+Check config.py (line 101) for the `instantiate` function.  
+Make sure it removes the `_target_` key before calling the constructor.
+
+**Example fix:**
+````python
+def instantiate(registry, config):
+    config = dict(config)
+    target = config.pop("_target_", None)
+    if target is None:
+        raise ValueError("No _target_ specified in config")
+    # ... resolve target to class ...
+    cls = resolve_target(target, registry)
+    return cls(**config)
+````
+
+### 2. **Check your callback config**
+
+Your callback config for early stopping should look like this (YAML):
+
+```yaml
+early_stopping:
+  _target_: pytorch_lightning.callbacks.EarlyStopping
+  monitor: val/accuracy
+  mode: max
+  patience: 20
+  min_delta: 0.001
+```
+
+But the `_target_` key **must not** be passed to the constructor.
+
+---
+
+## Summary
+
+- The `_target_` key is for Hydra/config instantiation, not for the actual class constructor.
+- **Solution:** Update your `instantiate` function to remove `_target_` before calling the class.
+
+---
+
+**If you want, I can show you the exact code to patch in your `utils/config.py`!**
+
+giulia-mascarin: here is the config.py file for the instantiate function
+
+GitHub Copilot: Your `instantiate` function in config.py is designed for configs using a `_name_` key (for your own registry), **not** for Hydra-style configs with a `_target_` key (used for callbacks like EarlyStopping).
+
+When you use a config like:
+```yaml
+early_stopping:
+  _target_: pytorch_lightning.callbacks.EarlyStopping
+  monitor: val/accuracy
+  mode: max
+  patience: 20
+```
+your function tries to pop `_name_` and fails, or passes `_target_` to the constructor, causing the error.
+
+---
+
+## **How to Fix**
+
+Update your `instantiate` function to handle both `_name_` (your registry) and `_target_` (Hydra-style) configs:
+
+````python
+def instantiate(registry, config, *args, partial=False, wrap=None, **kwargs):
+    """Instantiate a class or Callable. Wraps hydra.utils.instantiate.
+
+    Supports both registry-based (_name_) and hydra-based (_target_) configs.
+    """
+    if config is None:
+        return None
+
+    # If config is a string, treat as registry key
+    if isinstance(config, str):
+        _name_ = None
+        _target_ = registry[config]
+        config = {}
+    # If hydra-style _target_ is present
+    elif "_target_" in config:
+        config = dict(config)  # In case it's a DictConfig
+        _target_ = config.pop("_target_")
+        _name_ = config.pop("_name_", None)
+        fn = hydra.utils.get_method(path=_target_)
+    # If registry-style _name_ is present
+    else:
+        _name_ = config.pop("_name_")
+        _target_ = registry[_name_]
+        if isinstance(_target_, str):
+            fn = hydra.utils.get_method(path=_target_)
+        elif isinstance(_target_, Callable):
+            fn = _target_
+        else:
+            raise NotImplementedError("instantiate target must be string or callable")
+
+    if wrap is not None:
+        fn = wrap(fn)
+    obj = functools.partial(fn, *args, **config, **kwargs)
+
+    # Restore _name_
+    if _name_ is not None:
+        config["_name_"] = _name_
+
+    if partial:
+        return obj
+    else:
+        return obj()
+````
+// filepath: config.py
+
+---
+
+**This will allow both your registry-based and Hydra `_target_` configs to work, and will fix the EarlyStopping callback error.**
+
+Similar code found with 1 license type
+
+giulia-mascarin: Error executing job with overrides: ['wandb=null', 'pipeline=fsc', 'model=s4_fsc']
+Traceback (most recent call last):
+  File "/workspace/stm/s4/train.py", line 828, in main
+    train(config)
+  File "/workspace/stm/s4/train.py", line 734, in train
+    trainer.fit(model)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 531, in fit
+    call._call_and_handle_interrupt(
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/call.py", line 42, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 570, in _fit_impl
+    self._run(model, ckpt_path=ckpt_path)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 975, in _run
+    results = self._run_stage()
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 1016, in _run_stage
+    self._run_sanity_check()
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/trainer.py", line 1042, in _run_sanity_check
+    call._call_callback_hooks(self, "on_sanity_check_start")
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/trainer/call.py", line 189, in _call_callback_hooks
+    fn(trainer, trainer.lightning_module, *args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/callbacks/progress/rich_progress.py", line 353, in on_sanity_check_start
+    self._init_progress(trainer)
+  File "/usr/local/lib/python3.10/dist-packages/pytorch_lightning/callbacks/progress/rich_progress.py", line 323, in _init_progress
+    self._console.clear_live()
+  File "/usr/local/lib/python3.10/dist-packages/rich/console.py", line 847, in clear_live
+    self._live_stack.pop()
+IndexError: pop from empty list
+
+GitHub Copilot: The error:
+
+```
+IndexError: pop from empty list
+  File "/usr/local/lib/python3.10/dist-packages/rich/console.py", line 847, in clear_live
+    self._live_stack.pop()
+```
+
+comes from the `RichProgressBar` callback in PyTorch Lightning, which uses the `rich` library for pretty progress bars and summaries.
+
+---
+
+## Why does this happen?
+
+This is a known issue with some versions of `rich` and `pytorch_lightning` when:
+- The `RichProgressBar` callback is enabled,
+- The environment does not support a proper terminal (common in some containers, CI, or notebook environments),
+- Or there is a mismatch between the versions of `rich` and `pytorch_lightning`.
+
+---
+
+## How to Fix
+
+### 1. **Update `rich` and `pytorch_lightning`**
+
+Make sure you have the latest compatible versions:
+
+```sh
+pip install --upgrade rich pytorch_lightning
+```
+
+### 2. **(Recommended) Remove or Replace the `rich` Callback**
+
+If you don't need the rich progress bar, **remove** it from your config:
+
+```yaml
+# In configs/config.yaml or your experiment config
+- callbacks:
+    - base
+    - checkpoint
+    # - rich   # <-- comment out or remove this line
+```
+
+Or, if you want only the model summary, add just the `ModelSummary` callback:
+
+```yaml
+callbacks:
+  model_summary:
+    _target_: pytorch_lightning.callbacks.ModelSummary
+    max_depth: 2
+```
+
+### 3. **If you want to keep `rich`, try this workaround**
+
+Set the environment variable to force rich to use a simple console:
+
+```sh
+export PYTHONIOENCODING=utf-8
+export TERM=xterm
+```
+
+Or, in your Python code before importing anything else:
+
+```python
+import os
+os.environ["TERM"] = "xterm"
+```
+
+---
+
+## Summary
+
+- The error is due to the `RichProgressBar` callback and the `rich` library in your environment.
+- **Quick fix:** Remove or comment out the `rich` callback in your config.
+- **Alternative:** Update `rich` and `pytorch_lightning` to the latest versions.
+- **If you want a model summary, add only the `ModelSummary` callback.**
+
+Let me know if you want the exact YAML snippet to use!
+
+giulia-mascarin: Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/utils.py", line 220, in run_and_report
+    return func()
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/utils.py", line 458, in <lambda>
+    lambda: hydra.run(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/hydra.py", line 105, in run
+    cfg = self.compose_config(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/hydra.py", line 594, in compose_config
+    cfg = self.config_loader.load_configuration(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_loader_impl.py", line 142, in load_configuration
+    return self._load_configuration_impl(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_loader_impl.py", line 244, in _load_configuration_impl
+    parsed_overrides, caching_repo = self._parse_overrides_and_create_caching_repo(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_loader_impl.py", line 230, in _parse_overrides_and_create_caching_repo
+    self._process_config_searchpath(config_name, parsed_overrides, caching_repo)
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_loader_impl.py", line 159, in _process_config_searchpath
+    loaded = repo.load_config(config_path=config_name)
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_repository.py", line 348, in load_config
+    ret = self.delegate.load_config(config_path=config_path)
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_repository.py", line 100, in load_config
+    ret.defaults_list = self._create_defaults_list(config_path, raw_defaults)
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_repository.py", line 201, in _create_defaults_list
+    raise ValueError(
+ValueError: In config.yaml: Too many keys in default item {'callbacks': ['base', 'checkpoint'], 'model_summary': {'_target_': 'pytorch_lightning.callbacks.ModelSummary', 'max_depth': 2}}
+
+GitHub Copilot: The error:
+
+```
+ValueError: In config.yaml: Too many keys in default item {'callbacks': ['base', 'checkpoint'], 'model_summary': {'_target_': 'pytorch_lightning.callbacks.ModelSummary', 'max_depth': 2}}
+```
+
+means your `defaults` list in config.yaml is **not valid Hydra syntax**.  
+You have:
+
+```yaml
+- callbacks: # Extra pytorch-lightning features
+    - base
+    - checkpoint
+    model_summary:
+      _target_: pytorch_lightning.callbacks.ModelSummary
+      max_depth: 2 # How many layers to show in the model summary
+```
+
+This is **not allowed**:  
+Each item in the `defaults` list must be a single key-value pair, not a nested structure.
+
+---
+
+## **How to Fix**
+
+You must split each callback into its own item, or use a separate config file for callbacks.
+
+### **Option 1: Use a separate callbacks config file**
+
+Create a file:  
+`/workspace/stm/s4/configs/callbacks/default.yaml`  
+with:
+
+```yaml
+- base
+- checkpoint
+- model_summary
+```
+
+Then, in config.yaml:
+
+```yaml
+defaults:
+  - _self_
+  - experiment: base
+  - callbacks: default
+```
+
+And in `/workspace/stm/s4/configs/callbacks/model_summary.yaml`:
+
+```yaml
+_target_: pytorch_lightning.callbacks.ModelSummary
+max_depth: 2
+```
+
+---
+
+### **Option 2: Inline in config.yaml (quick fix)**
+
+Replace your current block with:
+
+```yaml
+defaults:
+  - _self_
+  - experiment: base
+  - callbacks: base
+  - callbacks: checkpoint
+  - callbacks: model_summary
+```
+
+And create `/workspace/stm/s4/configs/callbacks/model_summary.yaml`:
+
+```yaml
+_target_: pytorch_lightning.callbacks.ModelSummary
+max_depth: 2
+```
+
+---
+
+## **Summary**
+
+- **Hydra does not allow nested dicts in the `defaults` list.**
+- **Each callback must be a separate item, referencing a YAML file.**
+- **Create a `model_summary.yaml` file for your callback config.**
+
+---
+
+**After this change, your config will be valid and the model summary callback will work!**
+
+giulia-mascarin: I just added this to defeaults: section of the config.yaml file::
+  - model_summary:
+      _target_: pytorch_lightning.callbacks.ModelSummary
+      max_depth: 2 # How many layers to show in the model summary
+
+      and here's the error now:
+
+      Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/utils.py", line 220, in run_and_report
+    return func()
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/utils.py", line 458, in <lambda>
+    lambda: hydra.run(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/hydra.py", line 105, in run
+    cfg = self.compose_config(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/hydra.py", line 594, in compose_config
+    cfg = self.config_loader.load_configuration(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_loader_impl.py", line 142, in load_configuration
+    return self._load_configuration_impl(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_loader_impl.py", line 244, in _load_configuration_impl
+    parsed_overrides, caching_repo = self._parse_overrides_and_create_caching_repo(
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_loader_impl.py", line 230, in _parse_overrides_and_create_caching_repo
+    self._process_config_searchpath(config_name, parsed_overrides, caching_repo)
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_loader_impl.py", line 159, in _process_config_searchpath
+    loaded = repo.load_config(config_path=config_name)
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_repository.py", line 348, in load_config
+    ret = self.delegate.load_config(config_path=config_path)
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_repository.py", line 100, in load_config
+    ret.defaults_list = self._create_defaults_list(config_path, raw_defaults)
+  File "/usr/local/lib/python3.10/dist-packages/hydra/_internal/config_repository.py", line 235, in _create_defaults_list
+    raise ValueError(
+ValueError: Unsupported item value in defaults : dict. Supported: string or list
+
+GitHub Copilot: You are seeing this error because **Hydra does not allow dictionaries as items in the `defaults` list**.  
+This is invalid:
+
+```yaml
+- model_summary:
+    _target_: pytorch_lightning.callbacks.ModelSummary
+    max_depth: 2
+```
+
+**Each item in `defaults` must be a string or a list, not a dict.**
+
+---
+
+## **How to Fix**
+
+### 1. **Create a separate config file for the callback**
+
+Create a file:  
+`/workspace/stm/s4/configs/callbacks/model_summary.yaml`  
+with the following content:
+
+```yaml
+_target_: pytorch_lightning.callbacks.ModelSummary
+max_depth: 2
+```
+
+### 2. **Reference it in your main config's defaults list**
+
+Replace your current block in config.yaml with:
+
+```yaml
+defaults:
+  - _self_
+  - experiment: base
+  - callbacks: base
+  - callbacks: checkpoint
+  - callbacks: model_summary
+```
+
+---
+
+**This tells Hydra to load the `model_summary.yaml` callback config from the `callbacks` directory.**
+
+---
+
+### **Summary Table**
+
+| What you have (invalid) | What you need (valid) |
+|------------------------|----------------------|
+| `- model_summary: { ... }` | `- callbacks: model_summary` |
+
+---
+
+**After this change, Hydra will load your callback config correctly and the error will be resolved.**
+
+giulia-mascarin: I did as you said and it gives this:
+
+Global seed set to 0
+[2025-07-29 11:35:03,271][__main__][INFO] - Instantiating callback <src.callbacks.timer.Timer>
+[2025-07-29 11:35:03,272][__main__][INFO] - Instantiating callback <src.callbacks.params.ParamsLog>
+[2025-07-29 11:35:03,272][__main__][INFO] - Instantiating callback <pytorch_lightning.callbacks.ModelCheckpoint>
+[2025-07-29 11:35:03,274][__main__][INFO] - Instantiating callback <pytorch_lightning.callbacks.EarlyStopping>
+Error executing job with overrides: ['wandb=null', 'pipeline=fsc', 'model=s4_fsc']
+Traceback (most recent call last):
+  File "/workspace/stm/s4/train.py", line 828, in main
+    train(config)
+  File "/workspace/stm/s4/train.py", line 698, in train
+    trainer = create_trainer(config)
+  File "/workspace/stm/s4/train.py", line 645, in create_trainer
+    log.info(f"Instantiating callback <{registry.callbacks[_name_]}>")
+KeyError: '_target_'
+
+GitHub Copilot: The error:
+
+```
+KeyError: '_target_'
+```
+
+happens because your code is trying to look up a callback in `registry.callbacks` using `_name_`, but for Hydra-style callbacks (like ModelSummary or EarlyStopping), there is **no `_name_` key**—only a `_target_`.
+
+### Why this happens
+
+Your callback instantiation code likely looks like this:
+
+```python
+for _name_, callback in config.callbacks.items():
+    log.info(f"Instantiating callback <{registry.callbacks[_name_]}>")
+    callbacks.append(utils.instantiate(registry.callbacks, callback))
+```
+
+But when `callback` is a dict with only `_target_`, `_name_` is actually `'_target_'` or `None`, and `registry.callbacks[_name_]` fails.
+
+---
+
+## **How to Fix**
+
+You need to handle both registry-based and Hydra-style callbacks.  
+**Change your callback instantiation loop to something like:**
+
+````python
+for cb_cfg in config.callbacks.values():
+    # Try to get a name for logging
+    cb_name = cb_cfg.get("_name_", cb_cfg.get("_target_", str(cb_cfg)))
+    log.info(f"Instantiating callback <{cb_name}>")
+    callbacks.append(utils.instantiate(registry.callbacks, cb_cfg))
+````
+
+Or, if your config uses a list:
+
+````python
+for cb_cfg in config.callbacks:
+    cb_name = cb_cfg.get("_name_", cb_cfg.get("_target_", str(cb_cfg)))
+    log.info(f"Instantiating callback <{cb_name}>")
+    callbacks.append(utils.instantiate(registry.callbacks, cb_cfg))
+````
+
+**This will log the correct callback name and avoid the KeyError.**
+
+---
+
+### **Summary**
+
+- Do **not** assume all callbacks have a `_name_` key.
+- Use `_target_` for Hydra-style callbacks.
+- Update your logging and instantiation code to check for both.
+
+---
+
+**Let me know if you want the exact code block to patch in your `train.py`!**
+
+giulia-mascarin: does CTRL^Z and CTRL^C give the same signal to the python script running to fully stop and essentially kill it?
+
+GitHub Copilot: No, `CTRL^Z` and `CTRL^C` **do not** send the same signal or have the same effect:
+
+- **`CTRL^C`** sends the `SIGINT` (interrupt) signal to the running process.  
+  - This usually **terminates** the Python script (unless caught/handled).
+- **`CTRL^Z`** sends the `SIGTSTP` (terminal stop) signal.  
+  - This **suspends** (pauses) the process and puts it in the background, but does **not kill** it. You can resume it with `fg` (foreground) or `bg` (background).
+
+**Summary:**  
+- `CTRL^C` = Stop/kill (interrupt)
+- `CTRL^Z` = Pause/suspend (not kill)
+
+giulia-mascarin: can you modify this test.py file in such a way that I test the .ckpt generated by the train.py script when running: python -m train pipeline=fsc model=s4_fsc? I would like to test the checkpoint independently and to load a .wav file from data/fluent_speech_commands_dataset/wavs/ in order to see for myself if everythin is as expected...
+
+GitHub Copilot: Certainly! Here’s how you can modify your test.py to:
+
+1. **Load a `.ckpt` checkpoint generated by train.py** (with the full model and config).
+2. **Load a `.wav` file from your FSC dataset**.
+3. **Preprocess the audio to match your model’s input** (padding/truncating, mono, normalization if needed).
+4. **Run the model on the audio and print the predicted intent.**
+
+Below is a complete script.  
+**You may need to adjust the preprocessing to match your training pipeline (e.g., normalization, MFCC, etc).**
+
+````python
+import torch
+import torchaudio
+import sys
+from omegaconf import OmegaConf
+from pytorch_lightning import LightningModule
+
+def load_model_from_ckpt(ckpt_path):
+    # Load checkpoint (Lightning format)
+    ckpt = torch.load(ckpt_path, map_location='cpu')
+    # Get config from checkpoint
+    config = ckpt['hyper_parameters']['config'] if 'hyper_parameters' in ckpt and 'config' in ckpt['hyper_parameters'] else None
+    if config is None:
+        raise RuntimeError("Config not found in checkpoint. Was this trained with train.py?")
+    # Import here to avoid circular import
+    from train import SequenceLightningModule
+    model = SequenceLightningModule.load_from_checkpoint(ckpt_path, config=config)
+    model.eval()
+    return model, config
+
+def preprocess_audio(wav_path, length=16000):
+    waveform, sr = torchaudio.load(wav_path)
+    waveform = waveform.mean(dim=0)  # mono
+    # Pad or truncate
+    if len(waveform) < length:
+        pad = length - len(waveform)
+        waveform = torch.nn.functional.pad(waveform, (0, pad))
+    else:
+        waveform = waveform[:length]
+    # Model expects (L, 1) then (1, L, 1)
+    waveform = waveform.unsqueeze(1).unsqueeze(0)  # (1, L, 1)
+    return waveform
+
+def predict(model, x):
+    # Forward pass
+    with torch.no_grad():
+        logits = model.model(x)[0]  # (batch, seq, classes) or (batch, classes)
+        # If output is (batch, seq, classes), take last time step
+        if logits.ndim == 3:
+            logits = logits[:, -1]
+        probs = torch.softmax(logits, dim=-1)
+        pred = torch.argmax(probs, dim=-1)
+    return pred.item(), probs.squeeze().cpu().numpy()
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("Usage: python test.py <ckpt_path> <wav_path>")
+        sys.exit(1)
+    ckpt_path = sys.argv[1]
+    wav_path = sys.argv[2]
+
+    model, config = load_model_from_ckpt(ckpt_path)
+    # Use the same length as in training config if available
+    length = config['dataset']['length'] if 'dataset' in config and 'length' in config['dataset'] else 16000
+    x = preprocess_audio(wav_path, length=length)
+    pred, probs = predict(model, x)
+
+    # Print intent mapping if available
+    if hasattr(model.dataset, 'intents'):
+        intents = model.dataset.intents
+        print(f"Predicted intent: {intents[pred]} (class {pred})")
+    else:
+        print(f"Predicted class: {pred}")
+    print("Probabilities:", probs)
+````
+
+---
+
+### **How to use**
+
+```sh
+python test.py outputs/<date>/<time>/checkpoints/val/accuracy.ckpt data/fluent_speech_commands_dataset/wavs/speakers/<speaker>/<file>.wav
+```
+
+---
+
+### **Notes**
+- This script assumes your model was trained with train.py and the checkpoint contains the full config.
+- It uses the same preprocessing as your FSC dataloader (mono, pad/truncate to `length`).
+- If your model uses MFCC or other transforms, you may need to add that to `preprocess_audio`.
+- The script prints the predicted intent if available, otherwise the class index.
+
+Let me know if you want to handle MFCC or other transforms, or if you want to print the full intent mapping!

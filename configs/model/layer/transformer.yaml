@@ -9,5 +9,5 @@
   vdim: null
 - _name_: ffn
   expand: 4
-  activation: gelu
-  dropout: ${...dropout} # Same as null
+  activation: relu #gelu
+  dropout: 0.3 #0.5 #0.3 #0.25 #${...dropout} # Same as null

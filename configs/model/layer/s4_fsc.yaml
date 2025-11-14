@@ -1,11 +1,11 @@
 _name_: s4
-d_state: 32 #32 # 67% 64
-channels: 4 #1 #67% 2
-bidirectional: False # False #67% true
+d_state: 64 #96 #75% 64 #32 # 67% 64
+channels: 1 #1 #67% 2 #67.7% 4 with s4s4ff
+bidirectional: true # False #67% true
 gate: null # 4 for GSS
 gate_act: id # 4 for GSS
 bottleneck: null # 4 for GSS
-activation: relu  # gelu
+activation: relu #relu  # gelu
 mult_act: null
 final_act: glu # Final activation after FF layer; new name for 'postact'
 postact: null  # Deprecated for 'final_act'
@@ -22,13 +22,13 @@ measure: null  # Deprecated for 'init'
 rank: 1
 dt_min: 0.001
 dt_max: 0.1
-dt_transform: softplus  # Use 'exp' for any backwards-compatible experiments
+dt_transform: exp #softplus  # Use 'exp' for any backwards-compatible experiments
 lr:
   dt: 0.001
   A: 0.001
   B: 0.001
 wd: 0.0 # Can be dictionary like lr
-n_ssm: 2 #1
+n_ssm: 16 #75% 2 #1
 drop_kernel: 0.0
 deterministic: false # Special C init
 l_max: ${oc.select:dataset.__l_max,null} # Grab dataset length if exists, otherwise set to 1 and kernel will automatically resize

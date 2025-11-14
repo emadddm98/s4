@@ -1,20 +1,22 @@
 defaults:
-  - layer: s4
+  - layer: s4 #s4 #s4s4ff
 
 _name_: model
 prenorm: true
 transposed: false
-n_layers: 4 #2
-d_model: 64  #128 #67% 64
-bidirectional: false  # Different from inner layer's bidirectional, just concatenate a forward and reverse layer
+n_layers: 4 #8 #6 #2 #4
+d_model: 64 #1 #75% 64  #128 #67% 64
+bidirectional: true #false #75% true #false  # Different from inner layer's bidirectional, just concatenate a forward and reverse layer
 residual: R
+# norm:
+#   _name_: batch
 pool:
-  _name_: pool
-  stride: 1
+  _name_: max
+  stride: 1 #2
   expand: null
 norm: layer
-dropout: 0.0
-tie_dropout: false
+dropout: 0.15 #0.1 #0.3 #0.15 #0.1
+tie_dropout: false #true #false
 track_norms: true # Logs to wandb
 
 # Optional encoder/decoder, e.g. add positional embeddings or padding masks

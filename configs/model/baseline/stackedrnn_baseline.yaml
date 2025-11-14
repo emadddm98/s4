@@ -1,6 +1,6 @@
 _name_: stackedrnn_baseline
-d_model: 256
-d_hidden: 1024
+d_model: 64 #256
+d_hidden: 256 #1024
 n_layers: 2
 learn_h0: false
 rnn_type: gru

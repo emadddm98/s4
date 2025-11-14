@@ -1,0 +1,78 @@
+# @package _global_
+# Conformer-S4(-Mamba) for FSC Intent Classification
+
+defaults:
+  - /pipeline: fsc
+  - /model: mamba_seq_ext
+  - override /dataset: fsc_aug
+
+
+dataset:
+  _name_: fsc_aug
+  mfcc: false  # use MFCCs
+  n_mfcc: 40
+  melkwargs:
+    n_mels: 64
+    n_fft: 400
+    hop_length: 160
+    win_length: 400
+    center: true
+    f_min: 0.0
+  augment: true
+  time_mask_param: 20
+  freq_mask_param: 8
+  normalize: true
+
+model:
+  _name_: mamba_seq_ext
+  d_model: 192 #64       # hidden dim
+  n_layers: 8 #5 #3        # depth
+  dropout: 0.25
+  use_residual: true
+  ffn_dim: 1024 #256      # inner dim of the small FFN
+optimizer:
+  _name_: adamw
+  lr: 0.0005 # lower learning rate
+  weight_decay: 0.07
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 2000 #1000 #500
+  num_training_steps: 32000 #20000 #32000 #16000 #8000
+
+encoder:
+  _name_: conv_stack
+  layers:
+    - out_channels: 128
+      kernel_size: 16
+      stride: 4
+      padding: 6
+      activation: gelu
+      norm: layer
+      dropout: 0.2
+    - out_channels: 128 #128 #96
+      kernel_size: 8
+      stride: 2
+      padding: 3
+      activation: gelu
+      norm: layer
+      dropout: 0.2 #0.4 #0.35
+    - out_channels: 128
+      kernel_size: 4
+      stride: 2
+      padding: 1
+      activation: gelu
+      norm: layer
+      dropout: 0.2
+
+
+decoder:
+  _name_: sequence
+  mode: pool
+
+callbacks:
+  early_stopping:
+    patience: 20 # allow more epochs
+    min_delta: 0.001

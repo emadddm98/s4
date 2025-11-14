@@ -798,7 +798,11 @@ class SSMKernelDPLR(SSMKernelDiag):
             L = round(self.l_kernel.item() / rate)
 
         # Increase the internal length if needed
-        continuous_L = round(rate*L)
+
+        #WAS CHANGED FOR EXPORTING TO ONNX
+        # continuous_L = round(rate*L)
+        continuous_L = round(float((rate*L).item() if torch.is_tensor(rate*L) else rate*L))
+        
         while continuous_L > self.l_kernel.item():
             self._setup_C(continuous_L)
         discrete_L = round(self.l_kernel.item()/rate)

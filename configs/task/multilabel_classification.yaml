@@ -1,7 +1,8 @@
-# _target_:
 _name_: base
-loss: binary_cross_entropy
-metrics: null
+description: Multilabel classification for action, object, location
+metrics:
+  - accuracy
+loss: cross_entropy
 torchmetrics:
   - AUROC
   - Precision

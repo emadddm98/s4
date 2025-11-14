@@ -33,7 +33,6 @@ import torch.backends
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-
 # Lots of annoying hacks to get WandbLogger to continuously retry on failure
 class DummyExperiment:
     """Dummy experiment."""
@@ -165,10 +164,12 @@ class SequenceLightningModule(pl.LightningModule):
             self.hparams.model.pop("decoder", None)
         ) + utils.to_list(self.hparams.decoder)
 
+        # print("Encoder config:", encoder_cfg)
         # print("Decoder config:", decoder_cfg)
 
         # Instantiate model
         self.model = utils.instantiate(registry.model, self.hparams.model)
+         
         # print("Model instantiated:", self.model)
 
         if (name := self.hparams.train.post_init_hook['_name_']) is not None:
@@ -183,7 +184,7 @@ class SequenceLightningModule(pl.LightningModule):
             tasks.registry, self.hparams.task, dataset=self.dataset, model=self.model
         )
         
-        print("Task instantiated:", self.task.decoder)
+        # print("Task instantiated:", self.task.decoder)
         
         # Create encoders and decoders
         encoder = encoders.instantiate(
@@ -192,10 +193,16 @@ class SequenceLightningModule(pl.LightningModule):
         decoder = decoders.instantiate(
             decoder_cfg, model=self.model, dataset=self.dataset
         )
-        
-        ##SUPER UGLY BUT I WANT TO MAKE IT WORK FOR NOW
-        decoder[0].output_transform = nn.Linear(in_features=64, out_features=6)
 
+        # print("MODEL PARAMETERS", self.hparams.model, "ITS TYPE IS", type(self.hparams.model))
+        # print("DOES IT EXIST?", hasattr(self.hparams.model, 'd_hidden'), "AND ITS VALUE IS", self.hparams.model.d_hidden)
+
+        ##SUPER UGLY BUT I WANT TO MAKE IT WORK FOR NOW
+        # if len(decoder) > 0:  # Only set output_transform if decoder exists
+        #     decoder[0].output_transform = nn.Linear(in_features=self.hparams.model.d_hidden if hasattr(self.hparams.model, 'd_hidden') else self.hparams.model.d_model, out_features=6)
+        
+        # print("ENCODER IS", encoder)
+        # print("ENCODER CONFIG", encoder_cfg)
         print("DECODER IS", decoder)
         print("DECODER CONFIG", decoder_cfg)
 
@@ -205,7 +212,7 @@ class SequenceLightningModule(pl.LightningModule):
         
         # Print the instantiated encoders and decoders
         # print("Encoder instantiated:", self.encoder)
-        print("Decoder instantiated:", self.decoder)
+        # print("Decoder instantiated:", self.decoder)
         
         # breakpoint()
         # exit()
@@ -232,7 +239,7 @@ class SequenceLightningModule(pl.LightningModule):
         print("Custom load_state_dict function is running.")
 
         # note, it needs to return something from the normal function we overrided
-        return super().load_state_dict(state_dict, strict=strict)
+        return super().load_state_dict(state_dict, strict=strict) #strict=strict
 
     def _check_config(self):
         assert self.hparams.train.state.mode in [None, "none", "null", "reset", "bptt", "tbptt"]
@@ -312,6 +319,7 @@ class SequenceLightningModule(pl.LightningModule):
         """Passes a batch through the encoder, backbone, and decoder"""
         # z holds arguments such as sequence length
         x, y, *z = batch # z holds extra dataloader info such as resolution
+       
         if len(z) == 0:
             z = {}
         else:
@@ -421,6 +429,10 @@ class SequenceLightningModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         loss = self._shared_step(batch, batch_idx, prefix="train")
+
+        ## EMAD: DIAGNOSIS OF GPU MEMORY USAGE
+        # if batch_idx == 0:
+        #     print(torch.cuda.memory_summary())
 
         # Log the loss explicitly so it shows up in WandB
         # Note that this currently runs into a bug in the progress bar with ddp (as of 1.4.6)
@@ -755,7 +767,184 @@ def train(config):
     if config.train.test:
         trainer.test(model)
 
+    """
 
+    # ================== QUANTIZATION BLOCK (ALWAYS RUN) ==================
+    if getattr(trainer, "is_global_zero", True):
+        print("[Quantization] Starting dynamic quantization (Linear layers).")
+
+        # Reuse trainer loaders if available, else rebuild
+        val_loaders = getattr(trainer, "val_dataloaders", None) or model.val_dataloader()
+        test_loaders = getattr(trainer, "test_dataloaders", None) or model.test_dataloader()
+        if not isinstance(val_loaders, (list, tuple)): val_loaders = [val_loaders]
+        if not isinstance(test_loaders, (list, tuple)): test_loaders = [test_loaders]
+
+        def _first_valid(loaders):
+            for ld in loaders:
+                if ld is None: continue
+                ds = getattr(ld, "dataset", None)
+                try:
+                    if ds is not None and len(ds) == 0: continue
+                except Exception:
+                    pass
+                return ld
+            return None
+        val_loader = _first_valid(val_loaders)
+        test_loader = _first_valid(test_loaders)
+
+        if val_loader is None: print("[Quantization][WARN] No usable validation loader found.")
+        if test_loader is None: print("[Quantization][WARN] No usable test loader found.")
+
+        # --- Helpers ---
+
+        def _move_nested(obj, device):
+            if torch.is_tensor(obj): return obj.to(device)
+            if isinstance(obj, dict): return {k: _move_nested(v, device) for k,v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                t = type(obj)
+                return t(_move_nested(v, device) for v in obj)
+            return obj
+
+        def _unify_model_device(module: nn.Module):
+            devs = {p.device for p in module.parameters()}
+            devs.update(b.device for b in module.buffers())
+            if len(devs) == 1:
+                return next(iter(devs))
+            # Prefer cuda if present
+            target = None
+            for d in devs:
+                if d.type == "cuda":
+                    target = d
+                    break
+            if target is None:
+                target = next(iter(devs))
+            module.to(target)
+            # Re-check in case of unregistered tensors
+            return target
+
+        def _move_hidden_tensors(obj, device, visited=None):
+            if visited is None: visited = set()
+            if id(obj) in visited: return
+            visited.add(id(obj))
+            if torch.is_tensor(obj):
+                return obj.to(device)
+            if isinstance(obj, (list, tuple)):
+                for v in obj: _move_hidden_tensors(v, device, visited)
+            elif isinstance(obj, dict):
+                for v in obj.values(): _move_hidden_tensors(v, device, visited)
+            elif hasattr(obj, "__dict__"):
+                for k, v in obj.__dict__.items():
+                    if isinstance(v, torch.Tensor):
+                        # Not a registered param/buffer (already moved by .to)
+                        obj.__dict__[k] = v.to(device)
+                    else:
+                        _move_hidden_tensors(v, device, visited)
+
+        # --- Evaluation (float on original unified device) ---
+
+        def _eval(module, loader, device):
+            if loader is None: return {}
+            module.eval()
+            totals, n, batches = {}, 0, 0
+            with torch.no_grad():
+                for batch in loader:
+                    if batch is None: continue
+                    if isinstance(batch, (list, tuple)):
+                        if len(batch) < 2: continue
+                        x = batch[0]; y = batch[1]
+                        z = batch[2] if (len(batch) > 2 and isinstance(batch[2], dict)) else {}
+                    elif isinstance(batch, dict):
+                        if "x" not in batch or "y" not in batch: continue
+                        x = batch["x"]; y = batch["y"]; z = batch.get("z", {})
+                    else:
+                        continue
+                    if x is None or y is None: continue
+
+                    x = x.to(device)
+                    y = y.to(device)
+
+                    try:
+                        x_enc, w = module.encoder(x, **z)
+                        w = _move_nested(w, device)
+                        x_core, state = module.model(x_enc, state=None, **w)
+                        logits, w2 = module.decoder(x_core, state=state, **z)
+                        if not isinstance(w2, dict): w2 = {}
+                    except Exception as e:
+                        print(f"[Quantization][DEBUG] forward error: {e}")
+                        continue
+
+                    try:
+                        metrics = module.task.metrics(logits, y, **w2)
+                    except Exception:
+                        metrics = {}
+
+                    if not metrics:
+                        cls_logits = logits[:, -1, :] if logits.ndim == 3 else logits
+                        if cls_logits.ndim >= 2:
+                            preds = cls_logits.argmax(dim=-1)
+                            acc = (preds == y).float().mean().item()
+                            metrics = {"acc": torch.tensor(acc, device=device)}
+
+                    bsz = y.size(0)
+                    n += bsz; batches += 1
+                    for k, v in metrics.items():
+                        val = v.item() if torch.is_tensor(v) else float(v)
+                        totals[k] = totals.get(k, 0.0) + val * bsz
+
+            if n == 0:
+                print("[Quantization][DEBUG] eval: 0 samples.")
+                return {}
+            out = {k: v / n for k, v in totals.items()}
+            print(f"[Quantization][DEBUG] eval: {batches} batches, {n} samples -> {out}")
+            return out
+
+        # Unify device for original model (some S4 internals may still be on cuda)
+        target_device = _unify_model_device(model)
+        _move_hidden_tensors(model, target_device)
+        print(f"[Quantization] Evaluating float model on device {target_device} ...")
+        float_val = _eval(model, val_loader, target_device)
+        float_test = _eval(model, test_loader, target_device)
+
+        # --- Create CPU copy & quantize ---
+        print("[Quantization] Creating full CPU copy...")
+        cpu_model = copy.deepcopy(model).to("cpu").eval()
+        _move_hidden_tensors(cpu_model, torch.device("cpu"))
+
+        print("[Quantization] Applying dynamic quantization (nn.Linear -> int8)...")
+        q_model = torch.quantization.quantize_dynamic(
+            cpu_model, {nn.Linear}, dtype=torch.qint8, inplace=True
+        ).eval()
+
+        print("[Quantization] Evaluating quantized model on CPU...")
+        quant_val = _eval(q_model, val_loader, torch.device("cpu"))
+        quant_test = _eval(q_model, test_loader, torch.device("cpu"))
+
+        def _fmt(tag, d):
+            if not d:
+                print(tag + " <no metrics>")
+            else:
+                print(tag + " " + ", ".join(f"{k}={v:.4f}" for k, v in d.items()))
+
+        _fmt("[Quantization] Float  Val:", float_val)
+        _fmt("[Quantization] Quant  Val:", quant_val)
+        _fmt("[Quantization] Float  Test:", float_test)
+        _fmt("[Quantization] Quant  Test:", quant_test)
+
+        torch.save(
+            {
+                "state_dict": q_model.state_dict(),
+                "quantized": True,
+                "note": "Dynamic quantization (nn.Linear -> int8). Float eval on unified original device; quantized on CPU.",
+                "float_val_metrics": float_val,
+                "quant_val_metrics": quant_val,
+                "float_test_metrics": float_test,
+                "quant_test_metrics": quant_test,
+            },
+            "model_quantized_dynamic.pt",
+        )
+        print("[Quantization] Saved quantized model state_dict to model_quantized_dynamic.pt")
+    # ================== END QUANTIZATION BLOCK ==================
+    """
 
 def preemption_setup(config):
     if config.tolerance.id is None:

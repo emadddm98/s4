@@ -5,4 +5,4 @@ defaults:
 
 encoder:
   _name_: position
-  dropout: ${..dropout}
+  dropout: 0.5 #0.3 #0.25 #${..dropout}

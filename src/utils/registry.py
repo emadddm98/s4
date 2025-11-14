@@ -72,6 +72,17 @@ model = {
     "timm/convnext_tiny_3d": "src.models.baselines.convnext_timm.convnext3d_tiny",
     # Segmentation models
     "convnext_unet_tiny":    "src.models.segmentation.convnext_unet.convnext_tiny_unet",
+    # EMAD: Mamba models
+    "mamba_simple":                  "src.models.sequence.backbones.mamba_simple.MambaSequenceModel",
+    "mambaSeq":                         "src.models.sequence.backbones.mambaSeq.MambaSequenceModel",
+    "mamba_model":                  "src.models.sequence.backbones.mamba_model.MambaSequenceModel",
+
+    "mamba_seq_ext":     "src.models.sequence.backbones.mamba_seq_ext.MambaSequenceModel",
+    
+    # Conformer-S4 hybrid
+    "conformer_s4":      "models.s4.conformer_s4.ConformerS4Model",
+    
+    "conformer":             "models.conformer.Conformer",
 }
 
 layer = {
@@ -95,6 +106,8 @@ layer = {
     "h3":         "src.models.sequence.experimental.h3.H3",
     "h4":         "src.models.sequence.experimental.h4.H4",
     # 'packedrnn': 'models.sequence.rnns.packedrnn.PackedRNN',
+
+    "mamba":      "src.models.sequence.modules.mamba.MambaBlock",
 }
 
 layer_decay = {

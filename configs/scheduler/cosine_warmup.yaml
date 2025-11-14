@@ -4,5 +4,5 @@ train:
 scheduler:
   # _target_: transformers.get_cosine_schedule_with_warmup
   _name_: cosine_warmup
-  num_warmup_steps: 1000
-  num_training_steps: 40000
+  num_warmup_steps: 2300 #1000 #2300 #4600 #1000
+  num_training_steps: 20000 #10000 #20000 #47000 #92000 #40000

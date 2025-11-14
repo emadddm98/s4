@@ -1,6 +1,19 @@
 _name_: fsc
-# mfcc: False
-dropped_rate: 0.
-length: 16000
-# all_classes: true # Use original dataset or 10-way version
+
+# Set to True to enable MFCC feature extraction (sequence becomes frames x n_mfcc)
+mfcc: true #false #true
+n_mfcc: 64 #40 #20
+n_mels: 80 #64 #32
+
+# # STFT / framing parameters (used when mfcc=True)
+# n_fft: 400         # ~25 ms @16 kHz
+# hop_length: 160    # 10 ms hop
+# melkwargs: null    # Optional: override dict. If null, defaults assembled from above.
+
+dropped_rate: 0.0 #0.5
+length: 16000      # Raw audio target length (samples after pad/truncate)
 __l_max: ${.length}
+
+sample_rate: 16000 # Optional resample target (Hz); set lower (e.g. 8000) to speed up.
+
+all_classes: false #true #false

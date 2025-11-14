@@ -1,0 +1,44 @@
+# @package _global_
+# Conformer for FSC Intent Classification (SOTA)
+
+defaults:
+  - /pipeline: fsc
+  - /model: conformer
+  - override /dataset: fsc_aug
+
+dataset:
+  _name_: fsc_aug
+  mfcc: true
+
+encoder:
+  _name_: conv2d_stack
+  d_model: ${model.d_model}  # Match model d_model for compatibility
+  n_layers: 3  # Restore depth
+  kernel_size: [3, 3]  # Small kernel
+  stride: [1, 1]
+  padding: same
+  activation: relu
+  norm: batch
+  pool: max
+  pool_kernel_size: [2, 2]  # Small pool
+  pool_stride: [2, 2]
+  dropout: 0.25  # More regularization
+
+model:
+  _name_: conformer
+  d_model: 128  # Further reduced for memory
+  n_layers: 4  # Fewer layers
+  dropout: 0.15
+  ff_dim: 256  # Smaller feedforward
+  num_heads: 4  # Fewer attention heads
+  conv_kernel_size: 5  # Slightly smaller kernel
+
+optimizer:
+  _name_: adamw
+  lr: 0.0002  # Faster convergence
+  weight_decay: 0.02  # More regularization
+
+scheduler:
+  _name_: cosine_warmup
+  num_warmup_steps: 500
+  num_training_steps: 12000

@@ -13,7 +13,7 @@ defaults:
   - callbacks: # Extra pytorch-lightning features
     - base
     - checkpoint
-    - model_summary
+    # - model_summary
     # - rich # RichProgressBar and RichModelSummary
 
 # Additional arguments used to configure the training loop
@@ -40,17 +40,17 @@ train:
 
   ckpt: null # Resume training
 
-  optimizer_param_grouping:
-    bias_weight_decay: False
-    normalization_weight_decay: False
+  # optimizer_param_grouping: # Only needed for advanced optimizer setups, not typical for FSC
+  #   bias_weight_decay: False
+  #   normalization_weight_decay: False
 
   disable_dataset: False # Disable dataset loading
   validate_at_start: false
 
-  pretrained_model_path: null # Path to pretrained model
-  pretrained_model_strict_load: true # Whether to load the pretrained model even if the model is not compatible
-  pretrained_model_state_hook: # Hook called on the loaded model's state_dict
-    _name_: null
+  # pretrained_model_path: null # Path to pretrained model (uncomment if using pretrained weights)
+  # pretrained_model_strict_load: true # Only needed if loading incompatible pretrained models
+  # pretrained_model_state_hook: # Hook called on the loaded model's state_dict (advanced, rarely needed)
+  #   _name_: null
   post_init_hook: # After initializing model, call method on model
     _name_: null
 

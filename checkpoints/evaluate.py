@@ -14,6 +14,8 @@ from einops import rearrange, repeat, reduce
 from train import SequenceLightningModule
 from omegaconf import OmegaConf
 
+import os
+
 @hydra.main(config_path="../configs", config_name="generate.yaml")
 def main(config: OmegaConf):
     # Load train config from existing Hydra experiment
@@ -69,10 +71,31 @@ def main(config: OmegaConf):
             loss = model.loss_val(x, y, *w)
             print("Single batch loss:", loss)
 
-    ## Use PL test to calculate final metrics
-    from train import create_trainer
-    trainer = create_trainer(config)
-    trainer.test(model)
+
+    # Custom: Evaluate on training set if requested
+    if getattr(config, 'eval_on_train', False):
+        print("Evaluating on the training set...")
+        train_loader = model.train_dataloader()
+        model.eval()
+        all_preds, all_targets = [], []
+        with torch.no_grad():
+            for batch in train_loader:
+                x, y, *z = batch
+                x = x.cuda()
+                y = y.cuda()
+                out, *_ = model.model(x)
+                preds = out.argmax(-1)
+                all_preds.append(preds.cpu())
+                all_targets.append(y.cpu())
+        all_preds = torch.cat(all_preds)
+        all_targets = torch.cat(all_targets)
+        acc = (all_preds == all_targets).float().mean().item()
+        print(f"Train set accuracy: {acc:.4f}")
+    else:
+        ## Use PL test to calculate final metrics
+        from train import create_trainer
+        trainer = create_trainer(config)
+        trainer.test(model)
 
 if __name__ == '__main__':
     main()

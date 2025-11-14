@@ -310,7 +310,7 @@ class _SpeechCommands(torch.utils.data.TensorDataset):
             loc = base_loc / foldername
             for filename in os.listdir(loc):
                 audio, _ = torchaudio.load(
-                    loc / filename, channels_first=False,
+                    str(loc / filename), channels_first=False,
                 )
                 audio = (
                         audio / 2 ** 15
@@ -399,7 +399,7 @@ class _SpeechCommands(torch.utils.data.TensorDataset):
             loc = base_loc / foldername
             for filename in os.listdir(loc):
                 audio, _ = torchaudio.load(
-                    loc / filename, channels_first=False,
+                   str(loc / filename), channels_first=False,
                 )
                 # audio, _ = torchaudio.load_wav(
                 #     loc / filename, channels_first=False, normalization=False

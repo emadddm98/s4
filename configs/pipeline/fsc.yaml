@@ -2,24 +2,112 @@
 defaults:
   - /trainer: default
   - /loader: resolution
-  - /dataset: fsc
+  - /dataset: fsc #fsc_randomsplit #fsc
   - /task: multiclass_classification
-  - /optimizer: adamw
-  - /scheduler: plateau
+  - /optimizer: adamw #adamw #sgd doesn't work well
+  - /scheduler: plateau #cosine_warmup #plateau #cosine
+  # - /callbacks: swa #wasn't there
 
 train:
-  monitor: val/accuracy # Needed for plateau scheduler
-  mode: max
+  monitor: val/accuracy #val/loss #val/accuracy # Needed for plateau scheduler
+  mode: max #min #max
 
-encoder: linear
+encoder: null
 
+# encoder:
+#   _name_: conv_stack
+#   layers:
+#     - out_channels: 64
+#       kernel_size: 16
+#       stride: 4
+#       padding: 6
+#       activation: relu
+#       norm: batch
+#       dropout: 0.35
+#       pool: max
+#     - out_channels: 64
+#       kernel_size: 8
+#       stride: 2
+#       padding: 3
+#       activation: relu
+#       norm: batch
+#       dropout: 0.35
+#       pool: max
+
+
+# encoder:
+#   _name_: conv2d
+#   in_channels: 1
+#   out_channels: 64
+#   kernel_size: [3, 3]
+#   stride: [1, 1]
+#   padding: [1, 1]
+#   activation: relu
+#   norm: batch
+#   pool: max
+#   pool_kernel_size: [2, 2]
+#   pool_stride: [2, 2]
+#   dropout: 0.2
+
+
+# encoder:
+#   _name_: transformer
+#   d_input: 64 #1  # raw waveform input, change if using features (e.g., MFCC)
+#   d_model: 64
+#   n_layers: 4
+#   n_heads: 4
+#   dim_feedforward: 256 #128
+#   dropout: 0.3 #0.5 #0.3 #0.25 #0.1
+#   activation: relu
+
+# decoder: null
+# decoder:
+#   _name_: sequence
+#   mode: pool
+# decoder:
+#   _name_: linear
+  # d_output: 6 # Number of classes/Intents in FSC
+# decoder:
+#   _name_: nd
 decoder:
-  _name_: sequence
-  mode: pool
-  # num_classes: 6
-  # out_features: 6
-  # d_output: 6 # Number of output classes, should match dataset's number of classes
-
+  _name_: s4
+  aggregate: mean
+  d_model: 64 #128 #256 #512
+  n_layers: 4 #2
+  prenorm: true
+  dropout: 0.2 #0.1
+  tie_dropout: false
+  bidirectional: true #PATCH, NEW
+  layer:
+    - _name_: s4
+      d_state: 64
+      n_ssm: 8
+      bidirectional: true
+      channels: 1
+      activation: relu
+      final_act: glu
+      gate: null
+      gate_act: id
+      bottleneck: null
+      initializer: null
+      weight_norm: false
+      dt_min: 0.001
+      dt_max: 0.1
+      dt_transform: exp
+      rank: 1
+      measure: null
+      init: legs
+      layer: fftconv
+      lr:
+        dt: 0.001
+        A: 0.001
+        B: 0.001
+      wd: 0.0
+      drop_kernel: 0.0
+      deterministic: false
+      l_max: ${oc.select:dataset.__l_max,null}
+      verbose: false
+      dropout: 0.2 #0.1
 loader:
   train_resolution: 1
   eval_resolutions:

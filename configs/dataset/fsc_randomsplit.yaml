@@ -1,0 +1,15 @@
+# @package _global_
+
+# Dataset config for FSC with random split (80/10/10)
+
+dataset:
+  _name_: fsc_randomsplit
+  mfcc: True
+  n_mfcc: 64 #20
+  n_mels: 80 #32
+  n_fft: 400
+  hop_length: 160
+  melkwargs: null
+  # dropped_rate: 0.0
+  length: 16000
+  sample_rate: 16000

@@ -2,8 +2,8 @@ defaults:
   - layer: s4
 
 _name_: sashimi
-d_model: 64
-n_layers: 8
+d_model: 32
+n_layers: 6 #8
 pool:
   - 4
   - 4

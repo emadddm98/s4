@@ -1,0 +1,6 @@
+_name_: mamba_model
+d_model: 32
+n_layers: 8
+dropout: 0.1
+use_residual: true
+# ... any other Mamba kwargs ...

@@ -4,5 +4,5 @@ train:
 scheduler:
   # _target_: torch.optim.lr_scheduler.CosineAnnealingLR
   _name_: cosine
-  T_max: 100  # Max number of epochs steps for LR scheduler
-  eta_min: 1e-6  # Min learning rate for cosine scheduler
+  T_max: ${trainer.max_epochs} #100  # Max number of epochs steps for LR scheduler
+  eta_min: 1.0e-4 #1e-6  # Min learning rate for cosine scheduler

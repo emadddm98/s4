@@ -1,0 +1,16 @@
+# @package _group_
+_name_: fsc_aug
+module: src.dataloaders.datasets.fsc_aug
+class: FSCIntentAugDataset
+mfcc: false
+n_mfcc: 40
+melkwargs:
+  n_mels: 64
+  n_fft: 400
+  hop_length: 160
+  win_length: 400
+  center: true
+  f_min: 0.0
+augment: true
+time_mask_param: 30
+freq_mask_param: 15
